@@ -1,4 +1,4 @@
-# Interaction-driven topological superconductivity simulation
+# Topological superconductor simulation
 
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/hanzhihua72/top/master)
 
