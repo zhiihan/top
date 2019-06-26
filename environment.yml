@@ -1,6 +1,7 @@
-name: quspin
+name: plot
 channels:
   - weinbe58
+  - pyviz
   - pyviz/label/dev
   - defaults
 dependencies:
@@ -14,7 +15,7 @@ dependencies:
   - ca-certificates=2019.5.15=0
   - cairo=1.14.12=h7636065_2
   - cartopy=0.16.0=py36hfa13621_0
-  - certifi=2019.3.9=py36_0
+  - certifi=2019.6.16=py36_0
   - cffi=1.12.3=py36h2e261b9_0
   - cftime=1.0.3.4=py36hdd07704_1
   - chardet=3.0.4=py36_1
@@ -223,5 +224,5 @@ dependencies:
   - pip:
     - colorama==0.4.1
     - tqdm==4.32.2
-prefix: /media/maciejko/zhan/anaconda3/envs/quspin
+prefix: /media/maciejko/zhan/anaconda3/envs/plot
 
