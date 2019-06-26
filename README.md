@@ -1,2 +1,2 @@
 # top
-Topological Superconductivity
+Code for Topological Superconductivity Simulation
