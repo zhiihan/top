@@ -6,7 +6,7 @@ channels:
   - pyviz/label/dev
   - defaults
 dependencies:
-  - bokeh ==1.0.0dev6
+  - bokeh 
   - cartopy
   - cffi
   - dask ==0.18.2
