@@ -151,9 +151,9 @@ def compute_data(N, Delta = 1, t = 1, mu = 0, J = 1, h = 0):
 for N in range(6, 13):
     list_dicts = []
     list_errors = []
-    for h in np.linspace(0, 1, num=5):
-        for Delta in np.linspace(0,2,num=25):
-            for J in np.linspace(0,1,num=25):
+    for h in np.linspace(0, 1, num=10):
+        for Delta in np.linspace(0,2,num=50):
+            for J in np.linspace(0,1,num=50):
                 try:
                     list_dicts.append(compute_data(N, Delta=Delta, t=1, mu=0, J=J, h=h))
                     print('Successful', {'N':N, 'h':h,  'Delta':Delta, 'J':J})
