@@ -12,7 +12,6 @@ os.environ['MKL_NUM_THREADS']=str(4) # set number of MKL threads to run in paral
 import quspin
 import numpy as np # generic math functions
 import matplotlib.pyplot as plt
-import time
 import scipy
 import pandas as pd
 
