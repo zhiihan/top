@@ -1,4 +1,4 @@
-name: plot
+name: quspin
 channels:
   - weinbe58
   - pyviz
