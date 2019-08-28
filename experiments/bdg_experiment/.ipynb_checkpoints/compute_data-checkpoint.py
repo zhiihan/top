@@ -13,6 +13,7 @@ import numpy as np # generic math functions
 import matplotlib.pyplot as plt
 import scipy.sparse.linalg as la
 import pandas as pd
+import math
 
 import holoviews as hv
 hv.extension('bokeh')
@@ -129,7 +130,7 @@ for N in range(6, 15):
     for J in np.linspace(0, 2, num=linspace):
         for Delta in np.linspace(0, 2,num=linspace):
             list_dicts += compute_data(N, Delta, t, mu, J)
-        print({"N": N, "Delta": Delta, "J":, J})
+            print('Successful', {'N':N, 'Delta':Delta, 'J':J})
     
     print("Done computing, minimizing...")
     df = pd.DataFrame(list_dicts)
@@ -139,9 +140,9 @@ for N in range(6, 15):
         for Delta in np.linspace(0, 2,num=linspace):
             try:
                 ids.append(df[(abs(df.J - J) < 0.00005) & (abs(df.Delta - Delta) < 0.00005)].ground.idxmin())
+                print('Successful', {'N':N, 'Delta':Delta, 'J':J})
             except ValueError:
                 print(J, Delta)
-        print({"N": N, "Delta": Delta, "J":, J})
     df_minvals = df.iloc[ids]
     pd.DataFrame.to_csv(df_minvals,'bdg_eigenvals_full_minvals'+str(N)+'.csv', index=False)
     #df_minvals = pd.read_csv('bdg_eigenvals_full_minvals'+str(N)+'.csv', converters={'index': str})

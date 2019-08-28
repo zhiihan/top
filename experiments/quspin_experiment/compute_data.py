@@ -108,14 +108,14 @@ def make_Fermion_pair(N):
     #returns Quantum_linearOperator object
     return O
 
-def compute_data(N, Delta = 1, t = 1, mu = 0, J = 1, h = 0):
+def compute_data(N, Delta, t, mu, J, h):
     """Returns a Python dictionary."""
     
     #print('Beginning trial N = ',N,'h = ',h,'J = ',J, 'Delta =', Delta)
 
     H = make_Hamiltonian(N,J,h,t,mu,Delta)
 
-    E, V = scipy.sparse.linalg.eigsh(H.aslinearoperator(),which='SA',return_eigenvectors=True,k=10) #Multi-OpenMP/MKL 
+    E, V = scipy.sparse.linalg.eigsh(H.aslinearoperator(),which='SA',return_eigenvectors=True,k=2) #Multi-OpenMP/MKL 
     #E, V = scipy.sparse.linalg.eigsh(H.tocsr(),which='SA',return_eigenvectors=True,k=2) #Not Multithreaded
     #E, V = H.eigh()    
     delta_E=E[1]-E[0]
@@ -146,6 +146,8 @@ def compute_data(N, Delta = 1, t = 1, mu = 0, J = 1, h = 0):
     return dataset 
 
 #tediously compute the data
+t = 1
+mu = 0
 
 for N in range(6, 13):
     list_dicts = []
@@ -154,7 +156,7 @@ for N in range(6, 13):
         for Delta in np.linspace(0,2,num=50):
             for J in np.linspace(0,1,num=50):
                 try:
-                    list_dicts.append(compute_data(N, Delta=Delta, t=1, mu=0, J=J, h=h))
+                    list_dicts.append(compute_data(N, Delta, t, mu, J, h))
                     print('Successful', {'N':N, 'h':h,  'Delta':Delta, 'J':J})
                 except scipy.sparse.linalg.arpack.ArpackNoConvergence:
                     list_errors.append({'h':h,
