@@ -127,7 +127,7 @@ linspace = 50
 t = 1
 for N in range(6, 15):
     # Tediously compute the data
-    for J in np.linspace(0, 2, num=linspace):
+    for J in np.linspace(0, 1, num=linspace):
         for Delta in np.linspace(0, 2,num=linspace):
             list_dicts += compute_data(N, Delta, t, mu, J)
             print('Successful', {'N':N, 'Delta':Delta, 'J':J})
@@ -136,7 +136,7 @@ for N in range(6, 15):
     df = pd.DataFrame(list_dicts)
     # Find minimum
     ids = []
-    for J in np.linspace(0, 2, num=linspace):
+    for J in np.linspace(0, 1, num=linspace):
         for Delta in np.linspace(0, 2,num=linspace):
             try:
                 ids.append(df[(abs(df.J - J) < 0.00005) & (abs(df.Delta - Delta) < 0.00005)].ground.idxmin())
