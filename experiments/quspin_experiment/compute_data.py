@@ -1,7 +1,7 @@
 import sys,os
 
-os.environ['OMP_NUM_THREADS']=str(4) # set number of OpenMP threads to run in parallel
-os.environ['MKL_NUM_THREADS']=str(4) # set number of MKL threads to run in parallel
+os.environ['OMP_NUM_THREADS']=str(16) # set number of OpenMP threads to run in parallel
+os.environ['MKL_NUM_THREADS']=str(16) # set number of MKL threads to run in parallel
 
 #os.environ['OMP_NUM_THREADS']=str(int(sys.argv[1])) # set number of OpenMP threads to run in parallel
 #os.environ['MKL_NUM_THREADS']=str(int(sys.argv[2])) # set number of MKL threads to run in parallel
@@ -12,8 +12,11 @@ os.environ['MKL_NUM_THREADS']=str(4) # set number of MKL threads to run in paral
 import quspin
 import numpy as np # generic math functions
 import matplotlib.pyplot as plt
-import scipy
+import time
+from scipy.sparse.linalg import eigsh
 import pandas as pd
+import logging
+logging.basicConfig(filename='experiment.log', filemode='w', format='%(asctime)s - %(message)s', level=logging.DEBUG)
 
 def make_Hamiltonian(N,J,h,t,mu,Delta):
     """Returns a Quantum Hamiltonian."""
@@ -32,7 +35,7 @@ def make_Hamiltonian(N,J,h,t,mu,Delta):
         ["zz|",J_sum],
         ["x|",h_sum],
         ["|+-",t_sum_pm],
-        ["|-+",t_sum_mp],
+        ["|+-",t_sum_mp],
         ["z|--",Delta_sum_zmm],
         ["z|++",Delta_sum_zpp],
         ['|n',mu_sum]
@@ -112,13 +115,14 @@ def compute_data(N, Delta, t, mu, J, h):
     """Returns a Python dictionary."""
     
     #print('Beginning trial N = ',N,'h = ',h,'J = ',J, 'Delta =', Delta)
+    
+    #Add Divide by N
 
     H = make_Hamiltonian(N,J,h,t,mu,Delta)
 
-    E, V = scipy.sparse.linalg.eigsh(H.aslinearoperator(),which='SA',return_eigenvectors=True,k=2) #Multi-OpenMP/MKL 
-    #E, V = scipy.sparse.linalg.eigsh(H.tocsr(),which='SA',return_eigenvectors=True,k=2) #Not Multithreaded
-    #E, V = H.eigh()    
-    delta_E=E[1]-E[0]
+    E, V = eigsh(H.aslinearoperator(),which='SA',return_eigenvectors=True,k=1) #Multi-OpenMP/MKL 
+    #E, V = scipy.sparse.linalg.eigsh(H.tocsr(),which='SA',return_eigenvectors=True,k=1) #Not Multithreaded
+    #E, V = H.eigsh(which='SA',return_eigenvectors=True,k=2)    
     
     M = make_Magnetisation(N)
     O = make_Fermion_pair(N)
@@ -129,9 +133,9 @@ def compute_data(N, Delta, t, mu, J, h):
     M2_expval = np.vdot(M @ V,M @ V) #complex dotproduct
     O2_expval = np.vdot(O @ V,O @ V) #complex dotproduct
     
-    dataset = {'energy'+str(i): energy for i, energy in enumerate(E)}    
+    dataset = {'E'+str(i)+"_N": energy/N for i, energy in enumerate(E)}    
     
-    dataset.update({'delta_E': delta_E,
+    dataset.update({"E_N":E[0]/N,
             'M^2': np.real(M2_expval),
             'O^2':np.real(O2_expval),
             'Ms^2':np.real(Ms2_expval),
@@ -139,38 +143,40 @@ def compute_data(N, Delta, t, mu, J, h):
             'Delta':Delta,
             'h':h, 
             'N':N,
-            'identity': np.real(M2_expval - np.vdot(V, M @ V)**2)
+            't':t,
+            'identity': np.real(M2_expval - np.vdot(V, M @ V)**2)     
             })
     
     #store the data as a dictionary, since running this function once is one observation
     return dataset 
 
 #tediously compute the data
-t = 1
 mu = 0
-
-for N in range(6, 13):
-    list_dicts = []
-    list_errors = []
-    for h in np.linspace(0, 1, num=10):
-        for Delta in np.linspace(0,2,num=50):
-            for J in np.linspace(0,1,num=50):
-                try:
-                    list_dicts.append(compute_data(N, Delta, t, mu, J, h))
-                    print('Successful', {'N':N, 'h':h,  'Delta':Delta, 'J':J})
-                except scipy.sparse.linalg.arpack.ArpackNoConvergence:
-                    list_errors.append({'h':h,
-                                        'Delta':Delta,
-                                        'J':J,
-                                        'N':N
-                                       })
-                    print('Convergence failed', {'N':N, 'h':h,  'Delta':Delta, 'J':J})
-                except scipy.sparse.linalg.arpack.ArpackError:
-                    list_errors.append({'h':h,
-                        'Delta':Delta,
-                        'J':J,
-                        'N':N
-                       })
-                    print('ARPACK Error', {'N':N, 'h':h,  'Delta':Delta, 'J':J})
-    df = pd.DataFrame(list_dicts)
-    pd.DataFrame.to_csv(df,'quspin'+str(N)+'.csv',index=False)
+t = 1
+h = 0.44
+J = 0
+list_dicts = []
+for N in range(4,14):
+    for Delta in np.linspace(0.5, 1.5, num=50):
+        try:
+            list_dicts.append(compute_data(N, Delta, t, mu, J, h))
+            print('Successful', {'N':N, 'h':h,  'Delta':Delta, 'J':J, "t":t})
+            logging.info(f'Successful N = {N}, h = {h}, Delta = {Delta}, J = {J}, t={t}')
+        except scipy.sparse.linalg.arpack.ArpackNoConvergence:
+            list_errors.append({'h':h,
+                                'Delta':Delta,
+                                'J':J,
+                                'N':N
+                               })
+            print('Convergence failed', {'N':N, 'h':h,  'Delta':Delta, 'J':J, "t":t})
+        except scipy.sparse.linalg.arpack.ArpackError:
+            list_errors.append({'h':h,
+                'Delta':Delta,
+                'J':J,
+                'N':N
+               })
+            print('ARPACK Error', {'N':N, 'h':h,  'Delta':Delta, 'J':J, "t":t})
+        finally:
+            logging.info(f'Saving N = {N}, h = {h}, Delta = {Delta}, J = {J}, t={t}')
+            df = pd.DataFrame(list_dicts)
+            pd.DataFrame.to_csv(df,'quspin'+str(N)+'.csv',index=False)

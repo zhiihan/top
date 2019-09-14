@@ -1,7 +1,7 @@
 import sys,os
 
-os.environ['OMP_NUM_THREADS']=str(12) # set number of OpenMP threads to run in parallel
-os.environ['MKL_NUM_THREADS']=str(12) # set number of MKL threads to run in parallel
+os.environ['OMP_NUM_THREADS']=str(16) # set number of OpenMP threads to run in parallel
+os.environ['MKL_NUM_THREADS']=str(16) # set number of MKL threads to run in parallel
 
 #This is a script that implements the full tensor product hamiltonian in Quspin. 
 #This may take a long time for large N
@@ -164,7 +164,7 @@ logging.basicConfig(filename='experiment.log', filemode='w', format='%(asctime)s
 
 list_dicts = []
 list_errors = []
-for i,N in enumerate(range(6, 200)):
+for i,N in enumerate(range(14, 200)):
     J = np.random.rand()
     h = np.random.rand()
     Delta = np.random.rand()
