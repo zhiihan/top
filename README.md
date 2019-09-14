@@ -7,3 +7,5 @@ Code for Topological Superconductivity Simulation
 Click to Launch Jupyter Notebook in browser. 
 
 [Poster Plots](PosterPlots.html)
+
+[Analytical Derivations](Analytics.pdf)
