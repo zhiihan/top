@@ -24,6 +24,5 @@ def compute_data(h, J, Delta, cos):
             "M^2": np.abs(cos[np.argmin(data)]),
             "h": h,
             "E_N": var_energy(h, J, Delta, cos[np.argmin(data)]),
-            "t": t,
-            "N": np.infty
+            "t": t
            }

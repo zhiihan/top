@@ -156,7 +156,7 @@ t = 1
 h = 0.44
 J = 0
 list_dicts = []
-for N in range(4,14):
+for N in range(14,20):
     for Delta in np.linspace(0.5, 1.5, num=50):
         try:
             list_dicts.append(compute_data(N, Delta, t, mu, J, h))
