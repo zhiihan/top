@@ -1,0 +1,835 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.2.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.2.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.2.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.2.0.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://cdn.pydata.org/bokeh/release/bokeh-1.2.0.min.css">
+<link rel="stylesheet" href="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.2.0.min.css">
+<link rel="stylesheet" href="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.2.0.min.css">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+
+div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="aaa24ac3-1dd6-4e23-b807-95b344ba8fcf" data-root-id="1758"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"860a7f10-2ff4-4aec-97ca-8ad37447844b":{"roots":{"references":[{"attributes":{"below":[{"id":"1767","type":"CategoricalAxis"}],"center":[{"id":"1770","type":"Grid"},{"id":"1774","type":"Grid"}],"left":[{"id":"1771","type":"CategoricalAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"renderers":[{"id":"1793","type":"GlyphRenderer"}],"right":[{"id":"1796","type":"ColorBar"}],"sizing_mode":"fixed","title":{"id":"1759","type":"Title"},"toolbar":{"id":"1780","type":"Toolbar"},"toolbar_location":"above","x_range":{"id":"1755","type":"FactorRange"},"x_scale":{"id":"1763","type":"CategoricalScale"},"y_range":{"id":"1756","type":"FactorRange"},"y_scale":{"id":"1765","type":"CategoricalScale"}},"id":"1758","subtype":"Figure","type":"Plot"},{"attributes":{},"id":"1808","type":"UnionRenderers"},{"attributes":{"text":"Differences","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"1759","type":"Title"},{"attributes":{},"id":"1803","type":"BasicTickFormatter"},{"attributes":{"axis_label":"Delta","bounds":"auto","formatter":{"id":"1800","type":"CategoricalTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"1772","type":"CategoricalTicker"}},"id":"1771","type":"CategoricalAxis"},{"attributes":{},"id":"1772","type":"CategoricalTicker"},{"attributes":{"grid_line_color":null,"ticker":{"id":"1768","type":"CategoricalTicker"}},"id":"1770","type":"Grid"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"1757","type":"HoverTool"},{"id":"1775","type":"SaveTool"},{"id":"1776","type":"PanTool"},{"id":"1777","type":"WheelZoomTool"},{"id":"1778","type":"BoxZoomTool"},{"id":"1779","type":"ResetTool"}]},"id":"1780","type":"Toolbar"},{"attributes":{},"id":"1789","type":"Selection"},{"attributes":{},"id":"1779","type":"ResetTool"},{"attributes":{"axis_label":"J","bounds":"auto","formatter":{"id":"1798","type":"CategoricalTickFormatter"},"major_label_orientation":1.5707963267948966,"ticker":{"id":"1768","type":"CategoricalTicker"}},"id":"1767","type":"CategoricalAxis"},{"attributes":{"fill_color":{"field":"zvalues","transform":{"id":"1787","type":"LinearColorMapper"}},"height":{"units":"data","value":1},"line_alpha":{"value":0},"line_color":{"value":"#1f77b4"},"width":{"units":"data","value":1},"x":{"field":"J"},"y":{"field":"Delta"}},"id":"1791","type":"Rect"},{"attributes":{"overlay":{"id":"1810","type":"BoxAnnotation"}},"id":"1778","type":"BoxZoomTool"},{"attributes":{},"id":"1768","type":"CategoricalTicker"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"field":"zvalues","transform":{"id":"1787","type":"LinearColorMapper"}},"height":{"units":"data","value":1},"line_alpha":{"value":0},"line_color":{"value":"#1f77b4"},"width":{"units":"data","value":1},"x":{"field":"J"},"y":{"field":"Delta"}},"id":"1792","type":"Rect"},{"attributes":{"data_source":{"id":"1788","type":"ColumnDataSource"},"glyph":{"id":"1791","type":"Rect"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"1792","type":"Rect"},"selection_glyph":null,"view":{"id":"1794","type":"CDSView"}},"id":"1793","type":"GlyphRenderer"},{"attributes":{},"id":"1765","type":"CategoricalScale"},{"attributes":{"source":{"id":"1788","type":"ColumnDataSource"}},"id":"1794","type":"CDSView"},{"attributes":{},"id":"1795","type":"BasicTicker"},{"attributes":{"callback":null,"renderers":[{"id":"1793","type":"GlyphRenderer"}],"tags":["hv_created"],"tooltips":[["J","@{J}"],["Delta","@{Delta}"],["quspin-bdg","@{quspin_hyphen_minus_bdg}"]]},"id":"1757","type":"HoverTool"},{"attributes":{"bar_line_color":{"value":"black"},"color_mapper":{"id":"1787","type":"LinearColorMapper"},"formatter":{"id":"1803","type":"BasicTickFormatter"},"label_standoff":8,"location":[0,0],"major_tick_line_color":{"value":"black"},"ticker":{"id":"1795","type":"BasicTicker"}},"id":"1796","type":"ColorBar"},{"attributes":{"high":2.6423307986078726e-14,"low":0.0,"nan_color":"white","palette":["#313695","#313896","#323a97","#333d98","#343f99","#34429b","#35449c","#36479d","#37499e","#384c9f","#384ea1","#3951a2","#3a53a3","#3b56a4","#3b58a6","#3c5ba7","#3d5da8","#3e60a9","#3f62aa","#3f64ac","#4067ad","#4169ae","#426caf","#436eb0","#4371b2","#4473b3","#4576b4","#4778b5","#497ab6","#4b7cb7","#4d7eb9","#4f81ba","#5083bb","#5285bc","#5487bd","#5689be","#588cbf","#5a8ec1","#5c90c2","#5d92c3","#5f94c4","#6197c5","#6399c6","#659bc7","#679dc9","#689fca","#6aa2cb","#6ca4cc","#6ea6cd","#70a8ce","#72aacf","#74add1","#76aed1","#78b0d2","#7ab2d3","#7cb3d4","#7eb5d5","#80b7d6","#83b9d7","#85bad8","#87bcd9","#89beda","#8bbfdb","#8dc1dc","#90c3dd","#92c5de","#94c6df","#96c8e0","#98cae1","#9acce1","#9ccde2","#9fcfe3","#a1d1e4","#a3d2e5","#a5d4e6","#a7d6e7","#a9d8e8","#acd9e9","#aedae9","#b0dbea","#b2dceb","#b4ddeb","#b6deec","#b8dfec","#bae0ed","#bce1ed","#bee2ee","#c0e3ef","#c2e4ef","#c4e5f0","#c7e6f0","#c9e7f1","#cbe8f2","#cde9f2","#cfeaf3","#d1ebf3","#d3ecf4","#d5edf5","#d7eef5","#d9eff6","#dbf0f6","#ddf1f7","#e0f3f8","#e1f3f5","#e2f3f3","#e3f4f1","#e4f4ef","#e6f5ec","#e7f5ea","#e8f6e8","#e9f6e6","#eaf7e3","#ecf7e1","#edf8df","#eef8dd","#eff9da","#f1f9d8","#f2fad6","#f3fad4","#f4fbd2","#f5fbcf","#f7fbcd","#f8fccb","#f9fcc9","#fafdc6","#fbfdc4","#fdfec2","#fefec0","#fefebe","#fefdbc","#fefbba","#fefab8","#fef9b6","#fef8b4","#fef7b3","#fef5b1","#fef4af","#fef3ad","#fef2ab","#fef1a9","#feefa7","#feeea6","#feeda4","#feeca2","#feeaa0","#fee99e","#fee89c","#fee79b","#fee699","#fee497","#fee395","#fee293","#fee191","#fee090","#fdde8e","#fddc8c","#fdda8a","#fdd888","#fdd686","#fdd484","#fdd283","#fdd081","#fdce7f","#fdcc7d","#fdca7b","#fdc879","#fdc678","#fdc476","#fdc274","#fdc072","#fdbe70","#fdbc6e","#fdba6c","#fdb86b","#fdb669","#fdb467","#fdb265","#fdb063","#fdae61","#fcac60","#fcaa5f","#fca75e","#fba55c","#fba25b","#fb9f5a","#fa9d59","#fa9a58","#fa9857","#f99555","#f99354","#f89053","#f88e52","#f88b51","#f7894f","#f7864e","#f7834d","#f6814c","#f67e4b","#f67c4a","#f57948","#f57747","#f57446","#f47245","#f46f44","#f46d43","#f26a41","#f16840","#f0653f","#ef633e","#ee613d","#ed5e3c","#ec5c3b","#ea593a","#e95739","#e85538","#e75236","#e65035","#e54d34","#e44b33","#e24932","#e14631","#e04430","#df412f","#de3f2e","#dd3d2d","#dc3a2b","#da382a","#d93529","#d83328","#d73127","#d62f26","#d42d26","#d22b26","#d02926","#ce2726","#cc2526","#ca2326","#c82126","#c62026","#c41e26","#c21c26","#c01a26","#be1826","#bc1626","#ba1426","#b81226","#b61026","#b40f26","#b20d26","#b00b26","#ae0926","#ac0726","#aa0526","#a80326","#a60126","#a50026"]},"id":"1787","type":"LinearColorMapper"},{"attributes":{},"id":"1776","type":"PanTool"},{"attributes":{"callback":null,"factors":["0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2"],"tags":[[["Delta","Delta",null]]]},"id":"1756","type":"FactorRange"},{"attributes":{},"id":"1777","type":"WheelZoomTool"},{"attributes":{"callback":null,"factors":["0","0.020408","0.040816","0.061224","0.081633","0.10204","0.12245","0.14286","0.16327","0.18367","0.20408","0.22449","0.2449","0.26531","0.28571","0.30612","0.32653","0.34694","0.36735","0.38776","0.40816","0.42857","0.44898","0.46939","0.4898","0.5102","0.53061","0.55102","0.57143","0.59184","0.61224","0.63265","0.65306","0.67347","0.69388","0.71429","0.73469","0.7551","0.77551","0.79592","0.81633","0.83673","0.85714","0.87755","0.89796","0.91837","0.93878","0.95918","0.97959","1"],"tags":[[["J","J",null]]]},"id":"1755","type":"FactorRange"},{"attributes":{},"id":"1775","type":"SaveTool"},{"attributes":{},"id":"1798","type":"CategoricalTickFormatter"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"1810","type":"BoxAnnotation"},{"attributes":{},"id":"1800","type":"CategoricalTickFormatter"},{"attributes":{},"id":"1763","type":"CategoricalScale"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"1772","type":"CategoricalTicker"}},"id":"1774","type":"Grid"},{"attributes":{"callback":null,"data":{"Delta":["0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2","0","0.040816","0.081633","0.12245","0.16327","0.20408","0.2449","0.28571","0.32653","0.36735","0.40816","0.44898","0.4898","0.53061","0.57143","0.61224","0.65306","0.69388","0.73469","0.77551","0.81633","0.85714","0.89796","0.93878","0.97959","1.0204","1.0612","1.102","1.1429","1.1837","1.2245","1.2653","1.3061","1.3469","1.3878","1.4286","1.4694","1.5102","1.551","1.5918","1.6327","1.6735","1.7143","1.7551","1.7959","1.8367","1.8776","1.9184","1.9592","2"],"J":["0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.020408","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.040816","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.061224","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.081633","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.10204","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.12245","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.14286","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.16327","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.18367","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.20408","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.22449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.2449","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.26531","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.28571","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.30612","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.32653","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.34694","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.36735","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.38776","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.40816","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.42857","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.44898","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.46939","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.4898","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.5102","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.53061","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.55102","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.57143","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.59184","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.61224","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.63265","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.65306","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.67347","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.69388","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.71429","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.73469","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.7551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.77551","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.79592","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.81633","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.83673","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.85714","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.87755","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.89796","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.91837","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.93878","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.95918","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","0.97959","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1","1"],"quspin_hyphen_minus_bdg":["1.9984e-15","2.6423e-14","3.9968e-15","3.1086e-15","2.6645e-15","0","1.1102e-15","3.2196e-15","1.2212e-15","9.992e-16","4.6629e-15","2.8866e-15","3.3307e-15","3.3307e-16","2.2204e-16","7.7716e-16","2.4425e-15","3.1086e-15","4.1078e-15","5.107e-15","7.9936e-15","5.7732e-15","1.1102e-15","5.5511e-15","2.9976e-15","2.4425e-15","3.3307e-15","2.2204e-15","8.2157e-15","5.107e-15","7.3275e-15","5.7732e-15","5.3291e-15","4.885e-15","0","5.9952e-15","3.7748e-15","8.8818e-16","4.2188e-15","1.3323e-15","2.2204e-15","1.7764e-15","4.6629e-15","5.3291e-15","6.6613e-16","3.3307e-15","1.2879e-14","5.9952e-15","5.3291e-15","8.8818e-16","4.2188e-15","1.6653e-15","1.2212e-15","2.6645e-15","2.9976e-15","2.2204e-16","6.6613e-16","1.7764e-15","6.6613e-16","2.3315e-15","1.9984e-15","6.1062e-15","1.7764e-15","3.7748e-15","6.5503e-15","5.5511e-15","4.5519e-15","1.7764e-15","7.7716e-15","1.3323e-15","5.218e-15","5.9952e-15","4.4409e-15","4.4409e-15","5.5511e-15","3.7748e-15","0","8.6597e-15","4.6629e-15","0","2.2204e-16","4.4409e-15","5.7732e-15","3.7748e-15","3.7748e-15","8.2157e-15","2.2204e-16","1.1546e-14","1.1102e-15","3.3307e-15","5.9952e-15","3.3307e-15","4.4409e-16","1.7542e-14","4.4409e-16","1.3323e-15","6.6613e-16","8.8818e-16","3.3307e-15","3.9968e-15","3.9968e-15","2.3315e-15","4.774e-15","2.8866e-15","8.6597e-15","3.2196e-15","7.7716e-15","1.9984e-15","4.4409e-16","5.3291e-15","1.6653e-15","1.1102e-16","5.8842e-15","5.3291e-15","5.5511e-15","8.8818e-16","4.6629e-15","5.5511e-16","2.5535e-15","2.8866e-15","3.5527e-15","3.2196e-15","2.2204e-16","5.9952e-15","2.6645e-15","7.9936e-15","8.8818e-15","6.8834e-15","2.8866e-15","4.4409e-16","5.7732e-15","3.5527e-15","7.5495e-15","1.7764e-15","8.8818e-16","2.6645e-15","4.2188e-15","1.3323e-15","3.7748e-15","1.199e-14","5.107e-15","3.7748e-15","4.4409e-16","4.2188e-15","2.4425e-15","3.1086e-15","4.2188e-15","6.8834e-15","6.8834e-15","0","9.992e-16","1.2212e-15","2.5535e-15","2.5535e-15","8.8818e-16","2.6645e-15","1.3323e-15","9.992e-16","3.2196e-15","5.5511e-16","6.5503e-15","4.5519e-15","2.9976e-15","1.7764e-15","2.3315e-15","3.3307e-15","7.7716e-16","5.218e-15","5.6621e-15","7.7716e-16","4.774e-15","7.9936e-15","2.2204e-15","3.1086e-15","1.3323e-15","6.6613e-15","2.8866e-15","6.6613e-15","4.4409e-15","4.6629e-15","3.9968e-15","5.3291e-15","5.107e-15","4.885e-15","4.885e-15","6.4393e-15","1.1102e-14","1.7764e-15","1.3323e-15","5.7732e-15","3.3307e-15","1.1102e-15","9.1038e-15","6.8834e-15","3.1086e-15","1.2657e-14","6.8834e-15","5.9952e-15","1.088e-14","2.4425e-15","7.7716e-16","5.8842e-15","2.1094e-15","5.4401e-15","4.996e-15","7.2164e-15","2.9976e-15","2.4425e-15","2.7756e-15","1.1102e-16","2.3315e-15","4.774e-15","1.5543e-15","2.5535e-15","7.2164e-15","6.7724e-15","2.2204e-15","3.9968e-15","7.9936e-15","5.6621e-15","2.9976e-15","8.6597e-15","1.9984e-15","4.4409e-15","2.2204e-15","3.5527e-15","8.8818e-16","4.4409e-16","3.7748e-15","9.3259e-15","7.3275e-15","4.6629e-15","9.3259e-15","7.1054e-15","5.107e-15","8.2157e-15","5.107e-15","4.2188e-15","1.1102e-15","4.4409e-16","1.1102e-15","3.9968e-15","8.6597e-15","3.1086e-15","4.885e-15","4.6629e-15","3.9968e-15","3.9968e-15","9.3259e-15","3.5527e-15","4.5519e-15","3.8858e-15","1.5543e-15","3.3307e-16","5.3291e-15","1.7764e-15","2.1094e-15","2.3315e-15","2.3315e-15","3.7748e-15","5.9952e-15","4.3299e-15","3.9968e-15","4.996e-15","1.2212e-15","2.6645e-15","4.996e-15","3.5527e-15","7.6605e-15","2.9976e-15","4.6629e-15","3.5527e-15","4.6629e-15","3.5527e-15","1.5543e-15","2.2204e-15","2.8866e-15","9.77e-15","7.9936e-15","6.2172e-15","3.9968e-15","3.1086e-15","5.5511e-15","3.7748e-15","7.1054e-15","7.1054e-15","0","2.4425e-15","3.1086e-15","9.1038e-15","2.2204e-15","4.4409e-16","1.1546e-14","6.4393e-15","2.8866e-15","0","2.4425e-15","6.8834e-15","7.5495e-15","9.5479e-15","2.1094e-15","1.3323e-15","5.4401e-15","1.7764e-15","2.9976e-15","4.4409e-16","2.1094e-15","2.1094e-15","3.1086e-15","4.6629e-15","4.4409e-16","4.1078e-15","6.5503e-15","9.992e-16","3.2196e-15","1.2212e-15","3.5527e-15","1.1102e-15","3.2196e-15","5.9952e-15","3.7748e-15","3.5527e-15","3.9968e-15","6.6613e-15","3.7748e-15","3.9968e-15","4.4409e-16","2.2204e-15","4.2188e-15","5.3291e-15","5.107e-15","2.2204e-16","3.1086e-15","7.1054e-15","4.6629e-15","7.5495e-15","9.3259e-15","2.2204e-15","3.9968e-15","1.1102e-15","4.2188e-15","6.6613e-15","1.1324e-14","8.4377e-15","1.5543e-15","2.2204e-16","2.2204e-16","5.7732e-15","8.8818e-16","6.6613e-15","2.1094e-15","4.774e-15","4.4409e-15","4.5519e-15","1.6653e-15","4.4409e-16","4.4409e-16","6.1062e-15","5.6621e-15","3.8858e-15","2.5535e-15","1.2212e-15","4.6629e-15","2.4425e-15","3.6637e-15","4.6629e-15","4.5519e-15","3.9968e-15","3.3307e-15","3.3307e-15","3.1086e-15","2.2204e-15","5.5511e-15","4.885e-15","5.9952e-15","5.3291e-15","3.9968e-15","5.3291e-15","3.9968e-15","8.8818e-16","2.4425e-15","5.9952e-15","1.3323e-15","2.8866e-15","1.3323e-15","4.2188e-15","1.0436e-14","4.6629e-15","1.2879e-14","6.8834e-15","4.4409e-16","5.7732e-15","1.9984e-15","4.885e-15","5.107e-15","4.2188e-15","2.4425e-15","9.5479e-15","1.1102e-15","3.5527e-15","0","2.6645e-15","7.2164e-15","4.5519e-15","5.7732e-15","5.5511e-16","2.6645e-15","2.4425e-15","1.3323e-15","2.4425e-15","4.2188e-15","5.218e-15","7.3275e-15","1.2212e-15","4.6629e-15","2.2204e-16","9.992e-16","1.1102e-15","2.6645e-15","4.6629e-15","4.885e-15","3.5527e-15","1.9984e-15","5.5511e-15","4.4409e-15","5.3291e-15","6.6613e-15","7.3275e-15","5.9952e-15","4.4409e-15","5.9952e-15","1.0214e-14","5.3291e-15","5.3291e-15","2.2204e-15","2.8866e-15","0","5.5511e-15","6.6613e-15","3.9968e-15","7.5495e-15","9.992e-15","8.4377e-15","3.7748e-15","5.5511e-15","7.7716e-15","1.5543e-15","7.9936e-15","7.3275e-15","1.1768e-14","1.1102e-16","5.4401e-15","2.5535e-15","2.1094e-15","3.7748e-15","4.3299e-15","4.996e-15","2.6645e-15","2.8866e-15","3.9968e-15","3.8858e-15","3.8858e-15","5.107e-15","5.5511e-15","2.2204e-15","3.1086e-15","2.2204e-15","3.1086e-15","4.6629e-15","5.7732e-15","4.6629e-15","4.4409e-16","5.7732e-15","2.6645e-15","8.2157e-15","4.885e-15","4.2188e-15","4.2188e-15","6.6613e-15","3.3307e-15","6.6613e-16","5.5511e-15","3.7748e-15","3.3307e-15","2.6645e-15","4.885e-15","8.8818e-16","3.1086e-15","1.0436e-14","7.9936e-15","3.3307e-15","1.0214e-14","3.7748e-15","5.5511e-15","6.8834e-15","4.2188e-15","1.3767e-14","1.3767e-14","2.6645e-15","4.6629e-15","4.774e-15","7.3275e-15","2.4425e-15","9.992e-16","6.9944e-15","2.9976e-15","3.3307e-15","5.4401e-15","3.3307e-15","0","7.7716e-16","7.2164e-15","3.9968e-15","3.9968e-15","7.3275e-15","5.5511e-15","5.107e-15","5.7732e-15","1.3323e-15","3.9968e-15","1.9984e-15","7.3275e-15","2.4425e-15","3.9968e-15","7.3275e-15","6.6613e-15","4.885e-15","5.9952e-15","4.2188e-15","3.5527e-15","3.5527e-15","7.9936e-15","1.1102e-15","1.3323e-15","6.2172e-15","5.9952e-15","0","1.5543e-15","7.3275e-15","1.7764e-15","7.5495e-15","7.5495e-15","1.2212e-14","5.9952e-15","8.2157e-15","7.7716e-15","2.4425e-15","7.3275e-15","7.7716e-15","3.7748e-15","2.8866e-15","3.7748e-15","4.4409e-15","4.5519e-15","7.7716e-16","1.8874e-15","3.2196e-15","2.4425e-15","2.7756e-15","3.6637e-15","3.5527e-15","2.5535e-15","3.3307e-16","8.8818e-16","3.3307e-15","4.2188e-15","3.5527e-15","4.2188e-15","3.3307e-15","1.5543e-15","1.9984e-15","5.3291e-15","2.8866e-15","2.8866e-15","7.3275e-15","6.6613e-15","3.3307e-15","5.3291e-15","5.9952e-15","7.5495e-15","4.4409e-16","2.6645e-15","2.6645e-15","3.5527e-15","3.3307e-15","4.6629e-15","1.1102e-15","2.2204e-16","7.1054e-15","8.8818e-16","1.0214e-14","9.5479e-15","1.2879e-14","2.4425e-15","5.9952e-15","8.4377e-15","6.4393e-15","1.1546e-14","3.9968e-15","4.885e-15","2.4425e-15","1.7764e-15","2.4425e-15","4.885e-15","1.2212e-15","4.3299e-15","1.4433e-15","1.2212e-15","3.3307e-15","3.5527e-15","4.4409e-15","3.9968e-15","2.4425e-15","4.6629e-15","6.4393e-15","4.6629e-15","5.5511e-15","4.4409e-15","5.107e-15","1.5543e-15","5.5511e-15","7.3275e-15","4.2188e-15","6.6613e-16","4.4409e-15","6.4393e-15","6.6613e-16","4.6629e-15","5.5511e-15","6.2172e-15","2.2204e-15","1.3323e-15","3.9968e-15","3.5527e-15","6.6613e-16","6.6613e-16","5.7732e-15","4.2188e-15","2.2204e-15","5.107e-15","4.2188e-15","1.1102e-15","5.107e-15","1.2879e-14","4.2188e-15","8.2157e-15","5.9952e-15","7.7716e-15","3.3307e-15","6.6613e-15","3.9968e-15","5.218e-15","2.6645e-15","2.6645e-15","2.2204e-15","2.9976e-15","3.9968e-15","2.2204e-16","5.6621e-15","8.8818e-15","2.2204e-16","2.8866e-15","4.4409e-15","2.8866e-15","4.6629e-15","0","4.885e-15","1.7764e-15","3.9968e-15","3.7748e-15","2.4425e-15","5.3291e-15","4.4409e-15","5.107e-15","1.1102e-15","6.6613e-15","4.2188e-15","7.7716e-15","1.1102e-15","2.4425e-15","1.9984e-15","1.3323e-15","3.1086e-15","6.8834e-15","6.6613e-16","5.9952e-15","1.7764e-15","1.3323e-14","9.1038e-15","5.7732e-15","7.3275e-15","5.9952e-15","5.9952e-15","5.107e-15","6.8834e-15","4.4409e-16","4.6629e-15","7.7716e-15","9.77e-15","9.77e-15","2.9976e-15","5.9952e-15","3.9968e-15","6.3283e-15","5.6621e-15","4.774e-15","7.1054e-15","2.3315e-15","5.107e-15","1.7764e-15","4.2188e-15","3.9968e-15","2.6645e-15","4.885e-15","2.6645e-15","2.8866e-15","3.3307e-15","3.7748e-15","3.1086e-15","1.3323e-15","2.8866e-15","2.2204e-15","6.6613e-15","6.8834e-15","3.7748e-15","1.1102e-15","1.1102e-15","1.7764e-15","8.4377e-15","1.7764e-15","1.5543e-15","2.2204e-16","4.6629e-15","5.5511e-15","3.5527e-15","6.6613e-16","3.9968e-15","9.77e-15","2.8866e-15","3.7748e-15","7.1054e-15","2.2204e-16","9.3259e-15","6.6613e-16","4.6629e-15","1.1324e-14","4.4409e-15","9.1038e-15","5.9952e-15","1.1102e-14","5.9952e-15","4.774e-15","6.3283e-15","1.2212e-15","4.2188e-15","2.7756e-15","3.1086e-15","7.9936e-15","5.9952e-15","2.2204e-15","4.885e-15","5.5511e-15","6.2172e-15","3.5527e-15","5.107e-15","5.107e-15","4.2188e-15","2.6645e-15","5.7732e-15","2.6645e-15","2.4425e-15","7.9936e-15","2.2204e-15","4.2188e-15","4.4409e-15","7.5495e-15","6.2172e-15","7.7716e-15","2.6645e-15","6.4393e-15","9.77e-15","2.6645e-15","2.8866e-15","4.885e-15","3.3307e-15","5.5511e-15","2.4425e-15","1.1102e-15","2.6645e-15","6.4393e-15","7.7716e-15","6.6613e-15","9.992e-15","7.7716e-15","2.2204e-15","2.2204e-16","2.2204e-16","8.4377e-15","1.0658e-14","8.8818e-15","6.9944e-15","3.2196e-15","2.6645e-15","5.107e-15","4.4409e-15","5.9952e-15","5.9952e-15","1.7764e-15","4.885e-15","6.2172e-15","7.1054e-15","2.2204e-15","7.7716e-15","6.8834e-15","4.6629e-15","2.8866e-15","4.885e-15","7.3275e-15","1.9984e-15","5.7732e-15","2.2204e-15","3.9968e-15","8.6597e-15","3.7748e-15","6.6613e-15","1.7764e-15","4.4409e-15","8.6597e-15","6.8834e-15","5.7732e-15","3.5527e-15","5.107e-15","6.4393e-15","5.3291e-15","4.4409e-15","5.9952e-15","5.7732e-15","5.107e-15","6.2172e-15","5.107e-15","5.3291e-15","8.6597e-15","6.6613e-15","7.3275e-15","9.5479e-15","9.992e-15","1.7764e-15","9.1038e-15","5.7732e-15","5.107e-15","1.9984e-15","3.3307e-15","1.9984e-15","5.5511e-15","5.107e-15","3.3307e-15","4.2188e-15","4.4409e-15","4.4409e-16","7.1054e-15","3.9968e-15","6.4393e-15","2.2204e-15","7.1054e-15","5.107e-15","1.9984e-15","3.7748e-15","3.9968e-15","3.9968e-15","5.5511e-15","1.3323e-15","5.9952e-15","2.6645e-15","5.9952e-15","3.5527e-15","5.7732e-15","1.3323e-15","4.2188e-15","2.6645e-15","4.4409e-16","1.5543e-15","1.3323e-15","3.3307e-15","4.2188e-15","2.2204e-16","6.2172e-15","1.9984e-15","4.4409e-15","4.4409e-16","6.2172e-15","1.3323e-15","2.8866e-15","5.9952e-15","3.3307e-15","4.6629e-15","9.77e-15","1.0658e-14","1.1768e-14","7.7716e-15","6.4393e-15","3.7748e-15","1.5543e-15","4.6629e-15","5.3291e-15","4.6629e-15","4.885e-15","5.5511e-15","5.107e-15","7.7716e-15","6.2172e-15","7.7716e-15","4.2188e-15","5.3291e-15","5.107e-15","4.6629e-15","5.5511e-15","4.885e-15","2.8866e-15","2.2204e-15","5.9952e-15","1.9984e-15","1.9984e-15","3.9968e-15","6.6613e-15","8.6597e-15","4.6629e-15","5.3291e-15","2.2204e-15","3.7748e-15","5.9952e-15","2.6645e-15","6.2172e-15","5.7732e-15","8.2157e-15","3.7748e-15","6.8834e-15","9.3259e-15","7.7716e-15","3.1086e-15","1.1102e-14","7.5495e-15","3.5527e-15","1.2657e-14","8.8818e-16","9.3259e-15","3.9968e-15","4.885e-15","2.2204e-16","9.77e-15","8.4377e-15","4.2188e-15","7.1054e-15","2.8866e-15","5.3291e-15","1.1102e-15","5.5511e-15","3.5527e-15","3.9968e-15","5.3291e-15","3.7748e-15","5.7732e-15","7.1054e-15","3.5527e-15","2.4425e-15","4.4409e-15","3.7748e-15","7.1054e-15","5.7732e-15","4.2188e-15","4.885e-15","4.2188e-15","4.4409e-15","3.1086e-15","0","1.2879e-14","5.5511e-15","1.7764e-15","1.9984e-15","5.3291e-15","6.8834e-15","4.4409e-15","7.1054e-15","1.4655e-14","4.6629e-15","3.1086e-15","1.1324e-14","6.6613e-15","9.992e-15","9.1038e-15","1.0658e-14","3.3307e-15","8.8818e-15","8.6597e-15","6.2172e-15","7.9936e-15","2.4425e-15","3.5527e-15","4.4409e-16","7.1054e-15","3.7748e-15","2.2204e-15","5.3291e-15","4.6629e-15","5.7732e-15","3.3307e-15","3.5527e-15","8.4377e-15","5.3291e-15","7.3275e-15","2.8866e-15","5.3291e-15","1.0658e-14","4.6629e-15","3.9968e-15","9.1038e-15","3.1086e-15","4.2188e-15","6.6613e-15","6.2172e-15","2.8866e-15","4.4409e-15","2.8866e-15","4.2188e-15","5.3291e-15","2.4425e-15","1.9984e-15","7.1054e-15","7.5495e-15","9.1038e-15","3.3307e-15","3.5527e-15","6.8834e-15","8.4377e-15","9.5479e-15","2.6645e-15","3.9968e-15","1.1102e-14","4.4409e-16","6.8834e-15","2.4425e-15","2.8866e-15","5.7732e-15","9.77e-15","9.3259e-15","5.107e-15","5.107e-15","8.2157e-15","5.5511e-15","3.9968e-15","9.5479e-15","6.6613e-16","3.9968e-15","5.3291e-15","5.3291e-15","3.3307e-15","2.4425e-15","9.77e-15","6.2172e-15","7.3275e-15","4.2188e-15","6.6613e-15","5.3291e-15","5.9952e-15","4.6629e-15","7.1054e-15","6.8834e-15","5.7732e-15","8.4377e-15","3.9968e-15","3.9968e-15","5.3291e-15","2.6645e-15","3.5527e-15","3.1086e-15","8.8818e-16","9.1038e-15","7.9936e-15","8.8818e-16","3.9968e-15","1.3323e-15","6.6613e-15","5.9952e-15","5.9952e-15","3.5527e-15","9.3259e-15","1.3767e-14","1.3323e-15","9.1038e-15","8.4377e-15","8.2157e-15","1.088e-14","5.9952e-15","1.4433e-14","1.1102e-14","6.8834e-15","9.992e-15","1.9984e-15","4.4409e-16","2.4425e-15","5.7732e-15","4.4409e-16","0","4.4409e-16","6.6613e-15","3.5527e-15","8.2157e-15","7.7716e-15","7.7716e-15","4.6629e-15","9.992e-15","1.7764e-15","3.7748e-15","5.5511e-15","4.2188e-15","8.2157e-15","9.3259e-15","4.4409e-16","9.77e-15","1.7764e-15","1.3101e-14","6.6613e-16","3.5527e-15","1.1102e-15","3.9968e-15","2.4425e-15","4.2188e-15","2.2204e-16","2.2204e-15","5.7732e-15","8.4377e-15","6.6613e-15","8.4377e-15","8.4377e-15","2.6645e-15","1.7764e-15","5.7732e-15","4.6629e-15","9.992e-15","4.4409e-15","8.8818e-16","2.6645e-15","2.4425e-15","1.3989e-14","3.5527e-15","6.6613e-15","9.1038e-15","9.5479e-15","1.0436e-14","3.9968e-15","1.1768e-14","6.6613e-16","4.885e-15","3.5527e-15","6.6613e-15","3.3307e-15","0","2.4425e-15","3.1086e-15","2.8866e-15","5.7732e-15","4.885e-15","5.107e-15","1.9984e-15","6.6613e-15","3.5527e-15","4.885e-15","4.6629e-15","7.3275e-15","7.7716e-15","5.107e-15","6.6613e-15","5.107e-15","3.7748e-15","7.9936e-15","7.1054e-15","4.885e-15","6.8834e-15","8.2157e-15","1.7764e-15","5.9952e-15","4.885e-15","7.5495e-15","4.4409e-16","5.7732e-15","7.1054e-15","7.7716e-15","3.3307e-15","3.7748e-15","1.9984e-15","2.6645e-15","7.3275e-15","9.77e-15","8.8818e-15","4.4409e-16","6.8834e-15","1.5543e-15","1.1102e-15","9.1038e-15","7.7716e-15","1.3323e-15","5.9952e-15","2.2204e-16","2.4425e-15","2.4425e-15","7.1054e-15","5.9952e-15","8.8818e-16","5.3291e-15","6.6613e-15","5.7732e-15","4.885e-15","6.8834e-15","7.1054e-15","5.7732e-15","6.2172e-15","7.9936e-15","6.2172e-15","6.2172e-15","5.5511e-15","1.7764e-15","7.9936e-15","6.6613e-15","5.7732e-15","4.4409e-16","4.4409e-15","8.4377e-15","3.9968e-15","3.7748e-15","5.107e-15","3.7748e-15","9.3259e-15","1.1768e-14","8.2157e-15","7.7716e-15","3.9968e-15","3.5527e-15","7.9936e-15","5.9952e-15","1.2212e-14","5.107e-15","3.9968e-15","0","1.0658e-14","5.9952e-15","2.4425e-15","6.8834e-15","9.992e-15","1.0214e-14","3.9968e-15","1.2879e-14","3.5527e-15","4.6629e-15","5.9952e-15","1.3323e-15","5.3291e-15","2.8866e-15","3.3307e-15","6.8834e-15","6.2172e-15","4.6629e-15","7.9936e-15","4.885e-15","6.4393e-15","9.5479e-15","1.7764e-15","2.4425e-15","7.3275e-15","1.1102e-15","1.5543e-15","8.8818e-16","2.6645e-15","4.2188e-15","8.2157e-15","4.6629e-15","2.8866e-15","6.8834e-15","6.6613e-15","5.9952e-15","8.6597e-15","1.1102e-14","2.6645e-15","7.7716e-15","9.3259e-15","7.9936e-15","7.5495e-15","9.1038e-15","1.1102e-15","7.5495e-15","8.8818e-15","4.885e-15","5.5511e-15","3.9968e-15","8.6597e-15","9.992e-15","5.9952e-15","1.5543e-15","4.2188e-15","1.3323e-15","7.9936e-15","3.9968e-15","1.9984e-15","4.4409e-16","6.2172e-15","5.7732e-15","5.107e-15","6.4393e-15","6.8834e-15","5.3291e-15","3.5527e-15","3.5527e-15","6.2172e-15","1.5543e-15","1.9984e-15","3.9968e-15","5.3291e-15","5.3291e-15","0","7.7716e-15","4.4409e-15","8.8818e-16","1.5543e-15","9.3259e-15","4.6629e-15","1.0658e-14","1.7764e-15","5.3291e-15","3.7748e-15","2.8866e-15","8.8818e-15","9.992e-15","1.1102e-15","8.2157e-15","7.3275e-15","3.3307e-15","3.5527e-15","6.4393e-15","5.7732e-15","5.5511e-15","4.4409e-16","1.199e-14","7.9936e-15","5.7732e-15","7.3275e-15","1.843e-14","7.3275e-15","8.8818e-15","7.1054e-15","9.77e-15","6.6613e-15","5.7732e-15","1.3323e-15","5.7732e-15","0","7.7716e-15","1.1102e-15","7.3275e-15","7.7716e-15","5.3291e-15","5.107e-15","5.7732e-15","2.8866e-15","1.0658e-14","8.8818e-15","4.2188e-15","7.1054e-15","2.2204e-15","2.6645e-15","1.3323e-15","1.9984e-15","7.9936e-15","2.2204e-15","9.1038e-15","8.2157e-15","1.3323e-15","9.3259e-15","4.4409e-15","4.6629e-15","6.2172e-15","1.9984e-15","1.199e-14","8.8818e-15","6.4393e-15","2.8866e-15","7.9936e-15","7.5495e-15","5.5511e-15","7.5495e-15","5.5511e-15","6.4393e-15","1.9984e-15","7.9936e-15","1.088e-14","1.2879e-14","4.885e-15","4.4409e-15","6.4393e-15","7.1054e-15","7.1054e-15","1.0658e-14","7.9936e-15","6.6613e-16","3.9968e-15","8.2157e-15","3.3307e-15","7.3275e-15","0","4.6629e-15","1.0436e-14","1.9984e-15","5.7732e-15","8.4377e-15","6.2172e-15","2.6645e-15","4.885e-15","3.1086e-15","9.1038e-15","3.7748e-15","2.8866e-15","3.3307e-15","4.4409e-15","3.9968e-15","8.8818e-16","4.2188e-15","9.992e-15","8.6597e-15","7.3275e-15","4.4409e-15","4.885e-15","1.3323e-14","9.3259e-15","2.2204e-16","6.8834e-15","1.2434e-14","5.7732e-15","8.6597e-15","4.885e-15","1.7764e-15","2.4425e-15","1.0214e-14","3.9968e-15","9.992e-15","3.1086e-15","1.2434e-14","9.77e-15","1.2657e-14","9.3259e-15","1.4655e-14","6.2172e-15","5.3291e-15","9.77e-15","3.3307e-15","1.3323e-15","6.8834e-15","4.885e-15","4.6629e-15","3.7748e-15","7.1054e-15","8.8818e-16","7.7716e-15","9.1038e-15","2.8866e-15","5.9952e-15","9.77e-15","1.0436e-14","2.4425e-15","2.8866e-15","2.2204e-16","8.8818e-16","3.5527e-15","3.7748e-15","3.7748e-15","8.4377e-15","3.5527e-15","2.2204e-16","5.9952e-15","1.5543e-15","6.8834e-15","1.7764e-15","8.4377e-15","6.2172e-15","7.7716e-15","7.3275e-15","1.9984e-15","1.9984e-15","5.9952e-15","4.4409e-16","8.4377e-15","5.5511e-15","1.1324e-14","7.9936e-15","1.2657e-14","9.3259e-15","5.9952e-15","7.3275e-15","1.5543e-14","1.2879e-14","4.885e-15","4.4409e-15","7.5495e-15","6.2172e-15","1.1102e-15","2.6645e-15","5.7732e-15","6.6613e-16","2.2204e-16","5.9952e-15","2.4425e-15","2.4425e-15","5.107e-15","1.7764e-15","6.6613e-15","6.4393e-15","8.4377e-15","3.3307e-15","6.2172e-15","3.1086e-15","2.4425e-15","1.9984e-15","3.1086e-15","1.5543e-15","7.1054e-15","2.6645e-15","6.4393e-15","4.885e-15","4.4409e-15","7.3275e-15","5.107e-15","6.6613e-15","5.9952e-15","4.2188e-15","5.5511e-15","5.7732e-15","7.1054e-15","5.9952e-15","8.8818e-16","9.992e-15","8.8818e-15","1.0436e-14","7.9936e-15","3.9968e-15","1.1324e-14","5.9952e-15","1.199e-14","7.1054e-15","1.7764e-15","0","1.4211e-14","9.3259e-15","1.1102e-14","1.1546e-14","6.6613e-15","3.3307e-15","5.9952e-15","5.9952e-15","3.1086e-15","4.2188e-15","2.4425e-15","3.9968e-15","5.107e-15","4.4409e-15","9.77e-15","1.9984e-15","1.3323e-15","1.1102e-15","6.6613e-16","4.885e-15","1.7764e-15","1.3323e-15","9.77e-15","5.107e-15","1.9984e-15","3.9968e-15","2.2204e-16","5.5511e-15","3.1086e-15","2.8866e-15","8.6597e-15","3.7748e-15","3.1086e-15","6.8834e-15","6.4393e-15","4.885e-15","5.7732e-15","4.4409e-15","9.3259e-15","7.1054e-15","7.7716e-15","1.3323e-15","7.5495e-15","8.8818e-15","6.4393e-15","7.1054e-15","7.5495e-15","5.7732e-15","1.1102e-14","1.1102e-14","3.5527e-15","1.199e-14","1.1546e-14","1.199e-14","2.8866e-15","8.8818e-16","8.6597e-15","1.5543e-15","3.9968e-15","1.7764e-15","9.1038e-15","1.0658e-14","4.4409e-15","7.9936e-15","6.4393e-15","5.9952e-15","1.5543e-15","6.6613e-15","3.5527e-15","0","5.3291e-15","3.9968e-15","1.1102e-15","5.107e-15","1.1768e-14","0","1.9984e-15","4.6629e-15","2.4425e-15","9.1038e-15","8.6597e-15","3.1086e-15","8.8818e-16","6.8834e-15","4.6629e-15","4.2188e-15","2.2204e-15","7.3275e-15","8.4377e-15","3.9968e-15","7.1054e-15","9.3259e-15","3.5527e-15","1.4211e-14","1.6431e-14","6.2172e-15","5.7732e-15","1.2434e-14","7.1054e-15","2.2204e-15","0","4.885e-15","1.3323e-15","1.3767e-14","1.7764e-15","2.2204e-15","2.2204e-15","6.8834e-15","7.3275e-15","7.5495e-15","4.4409e-16","1.5543e-15","3.7748e-15","1.0658e-14","4.2188e-15","4.6629e-15","9.3259e-15","2.8866e-15","4.4409e-15","3.5527e-15","1.0214e-14","8.2157e-15","3.7748e-15","2.6645e-15","6.6613e-15","3.3307e-15","6.6613e-15","3.3307e-15","9.1038e-15","3.3307e-15","4.4409e-15","2.8866e-15","6.8834e-15","2.8866e-15","1.0214e-14","7.5495e-15","3.5527e-15","1.7764e-15","1.7764e-15","1.7764e-15","1.0436e-14","1.4877e-14","9.3259e-15","7.1054e-15","3.1086e-15","3.9968e-15","4.885e-15","7.9936e-15","3.1086e-15","9.3259e-15","3.1086e-15","1.5099e-14","1.5099e-14","1.4211e-14","3.7748e-15","4.4409e-15","4.4409e-16","5.7732e-15","3.7748e-15","6.6613e-15","2.4425e-15","5.5511e-15","9.1038e-15","1.0658e-14","9.77e-15","3.9968e-15","6.6613e-16","3.5527e-15","9.5479e-15","1.3323e-15","7.5495e-15","1.1546e-14","7.3275e-15","1.9984e-15","4.4409e-15","2.2204e-15","2.2204e-16","3.1086e-15","7.5495e-15","1.9984e-15","8.6597e-15","6.6613e-16","1.1324e-14","5.107e-15","8.8818e-16","7.3275e-15","5.3291e-15","6.8834e-15","1.1102e-14","7.1054e-15","8.8818e-15","1.1324e-14","3.1086e-15","3.5527e-15","1.0214e-14","5.7732e-15","1.1546e-14","3.5527e-15","8.8818e-15","1.3323e-14","6.2172e-15","4.4409e-15","8.8818e-15","1.6875e-14","1.9984e-15","9.1038e-15","4.2188e-15","8.8818e-16","8.8818e-16","1.0214e-14","9.3259e-15","7.1054e-15","3.1086e-15","2.2204e-16","9.992e-15","2.4425e-15","1.3323e-15","1.1324e-14","5.7732e-15","1.3323e-15","2.2204e-15","2.2204e-15","2.2204e-15","1.9984e-15","1.0214e-14","3.7748e-15","1.7764e-15","6.4393e-15","1.1102e-15","8.4377e-15","4.6629e-15","7.1054e-15","5.7732e-15","7.7716e-15","3.7748e-15","8.4377e-15","7.5495e-15","5.7732e-15","2.2204e-16","3.3307e-15","1.1102e-15","8.6597e-15","6.6613e-15","1.2434e-14","1.199e-14","1.1102e-14","5.7732e-15","1.2434e-14","4.4409e-16","1.1102e-14","1.5543e-14","7.9936e-15","3.5527e-15","8.8818e-16","3.3307e-15","1.5543e-15","1.7764e-15","6.4393e-15","7.9936e-15","5.3291e-15","7.7716e-15","7.9936e-15","8.2157e-15","1.3323e-15","8.6597e-15","6.6613e-15","4.6629e-15","6.6613e-16","2.6645e-15","8.6597e-15","8.6597e-15","4.4409e-16","2.6645e-15","4.2188e-15","4.6629e-15","8.8818e-15","1.1102e-15","1.5543e-15","7.9936e-15","9.77e-15","3.1086e-15","5.9952e-15","7.3275e-15","4.4409e-15","8.8818e-16","1.1102e-15","5.107e-15","2.8866e-15","6.2172e-15","3.7748e-15","9.5479e-15","7.1054e-15","7.1054e-15","1.0214e-14","7.9936e-15","1.2879e-14","1.0658e-14","1.3323e-14","1.199e-14","1.2434e-14","1.0658e-14","1.6875e-14","3.9968e-15","1.1102e-14","1.7764e-15","3.1086e-15","1.9984e-15","1.7764e-15","5.3291e-15","5.9952e-15","1.1102e-14","9.77e-15","7.5495e-15","3.7748e-15","4.4409e-16","6.8834e-15","3.3307e-15","7.7716e-15","5.9952e-15","3.5527e-15","5.9952e-15","7.1054e-15","5.9952e-15","8.2157e-15","6.6613e-15","6.6613e-16","4.6629e-15","5.107e-15","3.7748e-15","1.1546e-14","8.4377e-15","5.9952e-15","9.77e-15","1.7542e-14","9.3259e-15","7.9936e-15","6.6613e-15","1.5543e-15","8.6597e-15","6.8834e-15","5.107e-15","5.3291e-15","2.2204e-15","1.2879e-14","6.6613e-15","4.4409e-15","9.3259e-15","1.2879e-14","8.8818e-15","4.885e-15","6.6613e-15","1.5987e-14","7.9936e-15","3.5527e-15","4.6629e-15","4.4409e-15","6.6613e-15","7.9936e-15","7.1054e-15","2.4425e-15","1.7764e-15","1.1546e-14","1.5099e-14","4.4409e-15","5.9952e-15","2.4425e-15","1.3323e-15","2.4425e-15","3.3307e-15","0","8.8818e-16","5.5511e-15","3.5527e-15","6.8834e-15","6.8834e-15","5.7732e-15","6.2172e-15","4.885e-15","4.4409e-15","1.2212e-14","5.3291e-15","5.9952e-15","5.107e-15","3.9968e-15","5.107e-15","2.4425e-15","2.8866e-15","1.5543e-15","9.3259e-15","3.5527e-15","3.5527e-15","2.6645e-15","7.5495e-15","1.1546e-14","1.5543e-14","7.9936e-15","4.4409e-15","1.1102e-14","1.3767e-14","8.4377e-15","5.7732e-15","9.3259e-15","6.2172e-15","7.5495e-15","7.7716e-15","3.7748e-15","1.4433e-14","5.9952e-15","7.3275e-15","6.4393e-15","6.8834e-15","5.7732e-15","5.5511e-15","1.088e-14","7.9936e-15","1.7764e-15","3.5527e-15","1.7764e-15","3.9968e-15","1.1102e-15","5.5511e-15","8.8818e-15","3.1086e-15","2.8866e-15","2.6645e-15","5.5511e-15","5.9952e-15","5.9952e-15","3.9968e-15","7.1054e-15","9.77e-15","3.7748e-15","1.5543e-15","3.9968e-15","6.6613e-16","2.2204e-16","3.5527e-15","1.3323e-15","1.9984e-15","3.1086e-15","5.3291e-15","1.0214e-14","1.3323e-14","3.5527e-15","1.1546e-14","1.3323e-14","1.2434e-14","1.7764e-15","1.0658e-14","1.4211e-14","1.199e-14","3.9968e-15","1.7319e-14","1.2434e-14","5.9952e-15","3.3307e-15","7.1054e-15","4.885e-15","4.885e-15","4.4409e-15","1.2212e-14","4.885e-15","5.107e-15","2.2204e-15","3.5527e-15","5.107e-15","1.9984e-15","8.2157e-15","5.9952e-15","4.4409e-16","1.9984e-15","8.8818e-15","5.7732e-15","6.8834e-15","3.7748e-15","8.4377e-15","8.8818e-15","2.2204e-15","3.1086e-15","8.2157e-15","4.885e-15","8.8818e-16","1.2879e-14","8.8818e-15","1.5543e-15","5.3291e-15","4.4409e-16","6.4393e-15","1.3323e-15","1.2434e-14","2.6645e-15","5.7732e-15","7.5495e-15","1.2879e-14","8.8818e-15","4.4409e-15","1.6431e-14","1.7764e-14","1.1102e-14","1.1546e-14","7.9936e-15","2.2204e-15","1.5099e-14","1.4655e-14","6.4393e-15","6.6613e-15","5.107e-15","6.6613e-15","9.5479e-15","7.9936e-15","1.9984e-15","3.5527e-15","7.3275e-15","3.9968e-15","7.5495e-15","8.8818e-16","3.7748e-15","3.9968e-15","4.885e-15","4.4409e-16","5.5511e-15","4.2188e-15","1.5543e-15","1.2434e-14","7.5495e-15","1.7764e-15","3.3307e-15","1.7764e-15","3.7748e-15","0","3.9968e-15","6.6613e-15","1.0436e-14","8.8818e-16","2.4425e-15","1.5543e-15","8.2157e-15","4.885e-15","2.6645e-15","1.199e-14","4.4409e-16","9.3259e-15","5.3291e-15","1.2879e-14","1.2879e-14","8.8818e-15","6.6613e-15","4.885e-15","2.4425e-14","1.7764e-15","1.3323e-14","8.8818e-15","1.1546e-14","3.9968e-15","4.6629e-15","8.8818e-16","9.3259e-15","7.3275e-15","6.6613e-16","5.7732e-15","4.6629e-15","1.9984e-15","3.5527e-15","1.1102e-15","7.5495e-15","3.9968e-15","2.2204e-15","4.885e-15","4.2188e-15","1.5543e-15","1.5543e-15","5.5511e-15","1.9984e-15","1.1102e-15","5.3291e-15","5.7732e-15","7.9936e-15","9.5479e-15","1.3323e-15","5.107e-15","0","7.9936e-15","2.8866e-15","5.7732e-15","1.3323e-15","7.3275e-15","8.8818e-16","8.4377e-15","5.3291e-15","2.2204e-15","1.3323e-15","8.8818e-15","1.3323e-15","5.3291e-15","7.9936e-15","7.5495e-15","1.199e-14","7.5495e-15","6.2172e-15","1.3323e-15","2.6645e-15","7.9936e-15","5.7732e-15","1.5987e-14","5.3291e-15","5.5511e-15","9.992e-15","1.1324e-14","5.9952e-15","6.2172e-15","1.3545e-14","8.2157e-15","1.1546e-14","1.0658e-14","8.2157e-15","1.7764e-15","7.7716e-15","3.1086e-15","3.7748e-15","1.1102e-15","3.7748e-15","2.8866e-15","5.3291e-15","4.4409e-15","4.4409e-15","6.4393e-15","1.3323e-14","5.5511e-15","1.3101e-14","5.7732e-15","9.1038e-15","3.3307e-15","1.0436e-14","4.885e-15","3.9968e-15","8.8818e-16","1.0658e-14","9.77e-15","1.2434e-14","1.3323e-14","3.9968e-15","7.1054e-15","5.7732e-15","9.3259e-15","3.9968e-15","8.4377e-15","8.8818e-16","1.0214e-14","1.3767e-14","5.3291e-15","8.8818e-15","6.6613e-15","9.3259e-15","1.9096e-14","2.8866e-15","3.3307e-15","9.77e-15","6.6613e-15","2.6645e-15","9.992e-15","4.4409e-15","1.0436e-14","1.3323e-14","7.3275e-15","8.8818e-15","7.5495e-15","8.4377e-15","7.9936e-15","1.0658e-14","1.7764e-15","1.2657e-14","3.3307e-15","2.2204e-15","4.4409e-15","3.5527e-15","2.8866e-15","0","2.4425e-15","8.4377e-15","2.4425e-15","6.4393e-15","4.4409e-16","9.5479e-15","8.8818e-16","7.5495e-15","6.2172e-15","4.4409e-15","9.77e-15","7.5495e-15","2.2204e-15","5.3291e-15","7.5495e-15","9.77e-15","3.5527e-15","8.8818e-15","3.9968e-15","1.7319e-14","1.199e-14","1.3323e-15","1.7319e-14","1.7764e-15","9.3259e-15","3.9968e-15","4.885e-15","4.6629e-15","1.1324e-14","7.5495e-15","5.9952e-15","9.3259e-15","2.4425e-15","8.8818e-15","6.2172e-15","1.4655e-14","1.0214e-14","9.5479e-15","6.8834e-15","1.1768e-14","2.4425e-15","7.3275e-15","1.9984e-15","5.3291e-15","3.5527e-15","2.1094e-14","4.4409e-15","4.885e-15","6.2172e-15","6.2172e-15","3.9968e-15","1.9984e-15","6.6613e-15","7.9936e-15","4.885e-15","1.2434e-14","9.77e-15","3.9968e-15","9.77e-15","2.6645e-15","1.3767e-14","4.885e-15","1.1546e-14","2.6645e-15","8.8818e-15","3.5527e-15","1.1102e-14","4.4409e-15","1.199e-14","1.0658e-14","1.1102e-14","1.1102e-14","7.5495e-15","6.6613e-15","7.9936e-15","1.0214e-14","1.4211e-14","3.7748e-15","7.3275e-15","1.2212e-14","5.9952e-15","1.4433e-14","3.7748e-15","0","9.5479e-15","7.1054e-15","8.2157e-15","1.2657e-14","6.6613e-16","7.9936e-15","6.6613e-16","8.4377e-15","5.107e-15","2.2204e-16","7.7716e-15","4.4409e-15","3.9968e-15","6.2172e-15","5.5511e-15","1.1102e-15","3.1086e-15","2.6645e-15","3.3307e-15","2.2204e-15","1.5543e-15","1.0214e-14","2.6645e-15","4.885e-15","3.9968e-15","3.9968e-15","0","5.3291e-15","0","1.0658e-14","4.4409e-16","4.4409e-16","4.4409e-16","3.9968e-15","6.6613e-15","1.1102e-14","1.5543e-14","7.1054e-15","3.5527e-15","4.885e-15","4.4409e-15","1.2434e-14","9.3259e-15","4.4409e-16","1.5543e-15","1.1768e-14","9.5479e-15","1.5543e-15","4.6629e-15","4.2188e-15","2.8866e-15","1.2212e-14","6.6613e-16","7.1054e-15","7.1054e-15","4.885e-15","2.2204e-15","1.4433e-14","1.3323e-14","5.5511e-15","8.4377e-15","1.088e-14","3.5527e-15","3.5527e-15","1.5543e-15","7.7716e-15","5.5511e-15","1.1102e-15","9.1038e-15","9.77e-15","6.2172e-15","8.8818e-15","1.7764e-15","0","7.1054e-15","3.9968e-15","0","7.9936e-15","3.5527e-15","1.7764e-15","1.1546e-14","1.1102e-14","1.1546e-14","1.2879e-14","1.1102e-14","2.6645e-15","7.9936e-15","1.199e-14","5.3291e-15","3.5527e-15","1.0214e-14","5.7732e-15","6.6613e-15","7.9936e-15","9.77e-15","7.7716e-15","1.4211e-14","2.8866e-15","1.5099e-14","7.3275e-15","8.2157e-15","1.0436e-14","6.6613e-15","7.9936e-15","2.4425e-15","3.7748e-15","1.1546e-14","7.5495e-15","6.2172e-15","5.107e-15","3.5527e-15","2.2204e-15","3.5527e-15","2.8866e-15","2.2204e-15","7.9936e-15","5.107e-15","9.77e-15","5.3291e-15","6.2172e-15","5.3291e-15","2.6645e-15","1.7764e-15","1.3323e-15","8.8818e-15","6.6613e-15","2.6645e-15","1.3323e-14","5.3291e-15","4.4409e-16","7.1054e-15","6.2172e-15","9.3259e-15","8.4377e-15","1.5543e-14","1.2434e-14","6.2172e-15","9.3259e-15","4.885e-15","5.3291e-15","4.885e-15","1.7764e-14","1.0658e-14","2.4425e-15","7.5495e-15","5.9952e-15","5.9952e-15","2.2204e-16","1.1324e-14","8.6597e-15","9.77e-15","8.4377e-15","5.3291e-15","1.0436e-14","1.6653e-14","1.0436e-14","3.3307e-15","7.3275e-15","1.3545e-14","7.9936e-15","6.6613e-15","1.9984e-15","2.2204e-16","1.3323e-15","7.7716e-15","3.3307e-15","1.5543e-15","3.7748e-15","3.1086e-15","3.9968e-15","9.77e-15","8.8818e-16","3.9968e-15","3.1086e-15","2.6645e-15","1.7764e-15","2.2204e-15","2.6645e-15","4.885e-15","4.4409e-15","9.77e-15","8.4377e-15","8.8818e-15","2.6645e-15","7.9936e-15","1.9096e-14","1.5099e-14","1.199e-14","8.4377e-15","1.3323e-15","1.0214e-14","1.1102e-14","1.1102e-14"],"zvalues":{"__ndarray__":"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AADkPAAAAAAAAPI8AAAAAAAA1DwAAAAAAADzPAAAAAAAAP48AAAAAACACT0AAAAAAAADPQAAAAAAANw8AAAAAAAAsDwAAAAAAACwPAAAAAAAAPo8AAAAAAAA0DwAAAAAAAD+PAAAAAAAAOM8AAAAAACA9TwAAAAAAAD0PAAAAAAAgPQ8AAAAAAAA3jwAAAAAAADAPAAAAAAAAMA8AAAAAACA+zwAAAAAAID5PAAAAAAAgPE8AAAAAAAA5zwAAAAAAADWPAAAAAAAAPU8AAAAAAAA5jwAAAAAAIDwPAAAAAAAAPU8AAAAAACA9DwAAAAAAADyPAAAAAAAAO48AAAAAAAA7jwAAAAAAADsPAAAAAAAAOQ8AAAAAAAA+TwAAAAAAAD2PAAAAAAAAPs8AAAAAAAA+DwAAAAAAADyPAAAAAAAAPg8AAAAAAAA8jwAAAAAAADQPAAAAAAAAOY8AAAAAAAA+zwAAAAAAADYPAAAAAAAAOo8AAAAAAAA2DwAAAAAAADzPAAAAAAAgAc9AAAAAAAA9TwAAAAAAAANPQAAAAAAAP88AAAAAAAAwDwAAAAAAAD6PAAAAAAAAOI8AAAAAAAA9jwAAAAAAAD3PAAAAAAAAPM8AAAAAAAA5jwAAAAAAIAFPQAAAAAAANQ8AAAAAAAA8DwAAAAAAAAAAAAAAAAAAOg8AAAAAABAAD0AAAAAAID0PAAAAAAAAPo8AAAAAAAAxDwAAAAAAADoPAAAAAAAAOY8AAAAAAAA2DwAAAAAAADmPAAAAAAAAPM8AAAAAACA9zwAAAAAAIAAPQAAAAAAANY8AAAAAAAA9TwAAAAAAACwPAAAAAAAANI8AAAAAAAA1DwAAAAAAADoPAAAAAAAAPU8AAAAAAAA9jwAAAAAAADwPAAAAAAAAOI8AAAAAAAA+TwAAAAAAAD0PAAAAAAAAPg8AAAAAAAA/jwAAAAAAIAAPQAAAAAAAPs8AAAAAAAA9DwAAAAAAAD7PAAAAAAAAAc9AAAAAAAA+DwAAAAAAAD4PAAAAAAAAOQ8AAAAAAAA6jwAAAAAAAAAAAAAAAAAAPk8AAAAAAAA/jwAAAAAAADyPAAAAAAAAAE9AAAAAACABj0AAAAAAAADPQAAAAAAAPE8AAAAAAAA+TwAAAAAAIABPQAAAAAAANw8AAAAAAAAAj0AAAAAAIAAPQAAAAAAgAo9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AADUPAAAAAAAAOg8AAAAAAAA/TwAAAAAAIABPQAAAAAAAP48AAAAAACABj0AAAAAAIABPQAAAAAAAOQ8AAAAAAAAsDwAAAAAAACwPAAAAAAAAAM9AAAAAAAACD0AAAAAAAAEPQAAAAAAgP88AAAAAAAA7TwAAAAAAADoPAAAAAAAAPc8AAAAAAAA9DwAAAAAAAD7PAAAAAAAAPs8AAAAAAAA4DwAAAAAAAD2PAAAAAAAAPw8AAAAAAAAAD0AAAAAAADkPAAAAAAAgAE9AAAAAAAA/zwAAAAAAAD1PAAAAAAAAOo8AAAAAAAA9jwAAAAAAIAAPQAAAAAAAOI8AAAAAAAA+jwAAAAAAADkPAAAAAAAAPI8AAAAAACAAz0AAAAAAADxPAAAAAAAAP48AAAAAAAA4DwAAAAAAAD0PAAAAAAAgAM9AAAAAAAA/zwAAAAAAAD6PAAAAAAAAPA8AAAAAAAA9zwAAAAAAAD9PAAAAAAAAPg8AAAAAAAA9DwAAAAAAAD7PAAAAAAAAPo8AAAAAAAA9zwAAAAAAAD8PAAAAAAAAPc8AAAAAAAA+DwAAAAAAIADPQAAAAAAAP48AAAAAACAAD0AAAAAAIAFPQAAAAAAgAY9AAAAAAAA4DwAAAAAAIAEPQAAAAAAAPo8AAAAAAAA9zwAAAAAAADiPAAAAAAAAO48AAAAAAAA4jwAAAAAAAD5PAAAAAAAAPc8AAAAAAAA7jwAAAAAAADzPAAAAAAAAPQ8AAAAAAAAwDwAAAAAAAAAPQAAAAAAAPI8AAAAAAAA/TwAAAAAAADkPAAAAAAAAAA9AAAAAAAA9zwAAAAAAADiPAAAAAAAAPE8AAAAAAAA8jwAAAAAAADyPAAAAAAAAPk8AAAAAAAA2DwAAAAAAAD7PAAAAAAAAOg8AAAAAAAA+zwAAAAAAADwPAAAAAAAAPo8AAAAAAAA2DwAAAAAAADzPAAAAAAAAOg8AAAAAAAAwDwAAAAAAADcPAAAAAAAANg8AAAAAAAA7jwAAAAAAADzPAAAAAAAALA8AAAAAAAA/DwAAAAAAADiPAAAAAAAAPQ8AAAAAAAAwDwAAAAAAAD8PAAAAAAAANg8AAAAAAAA6jwAAAAAAAD7PAAAAAAAAO48AAAAAAAA9TwAAAAAAAAGPQAAAAAAAAg9AAAAAACACj0AAAAAAIABPQAAAAAAAP08AAAAAAAA8TwAAAAAAADcPAAAAAAAAPU8AAAAAAAA+DwAAAAAAAD1PAAAAAAAAPY8AAAAAAAA+TwAAAAAAAD3PAAAAAAAgAE9AAAAAAAA/DwAAAAAAIABPQAAAAAAAPM8AAAAAAAA+DwAAAAAAAD3PAAAAAAAAPU8AAAAAAAA+TwAAAAAAAD2PAAAAAAAAOo8AAAAAAAA5DwAAAAAAAD7PAAAAAAAAOI8AAAAAAAA4jwAAAAAAADyPAAAAAAAAP48AAAAAACAAz0AAAAAAAD1PAAAAAAAAPg8AAAAAAAA5DwAAAAAAADxPAAAAAAAAPs8AAAAAAAA6DwAAAAAAAD8PAAAAAAAAPo8AAAAAACAAj0AAAAAAADxPAAAAAAAAP88AAAAAAAABT0AAAAAAIABPQAAAAAAAOw8AAAAAAAACT0AAAAAAAABPQAAAAAAAPA8AAAAAACADD0AAAAAAADQPAAAAAAAAAU9AAAAAAAA8jwAAAAAAAD2PAAAAAAAALA8AAAAAAAABj0AAAAAAAADPQAAAAAAAPM8AAAAAAAAAD0AAAAAAADqPAAAAAAAAPg8AAAAAAAA1DwAAAAAAAD5PAAAAAAAAPA8AAAAAAAA8jwAAAAAAAD4PAAAAAAAAPE8AAAAAAAA+jwAAAAAAAAAPQAAAAAAAPA8AAAAAAAA5jwAAAAAAAD0PAAAAAAAAPE8AAAAAAAAAD0AAAAAAAD6PAAAAAAAAPM8AAAAAAAA9jwAAAAAAADzPAAAAAAAAPQ8AAAAAAAA7DwAAAAAAAAAAAAAAAAAAA09AAAAAAAA+TwAAAAAAADgPAAAAAAAAOI8AAAAAAAA+DwAAAAAAAD/PAAAAAAAAPQ8AAAAAAAAAD0AAAAAAIAQPQAAAAAAAPU8AAAAAAAA7DwAAAAAAIAJPQAAAAAAAP48AAAAAACABj0AAAAAAIAEPQAAAAAAAAg9AAAAAAAA7jwAAAAAAAAEPQAAAAAAgAM9AAAAAAAA/DwAAAAAAAACPQAAAAAAAOY8AAAAAAAA8DwAAAAAAADAPAAAAAAAAAA9AAAAAAAA8TwAAAAAAADkPAAAAAAAAPg8AAAAAAAA9TwAAAAAAAD6PAAAAAAAAO48AAAAAAAA8DwAAAAAAAADPQAAAAAAAPg8AAAAAACAAD0AAAAAAADqPAAAAAAAAPg8AAAAAAAACD0AAAAAAAD1PAAAAAAAAPI8AAAAAACABD0AAAAAAADsPAAAAAAAAPM8AAAAAAAA/jwAAAAAAAD8PAAAAAAAAOo8AAAAAAAA9DwAAAAAAADqPAAAAAAAAPM8AAAAAAAA+DwAAAAAAADmPAAAAAAAAOI8AAAAAAAAAD0AAAAAAAABPQAAAAAAgAQ9AAAAAAAA7jwAAAAAAADwPAAAAAAAAP88AAAAAAAAAz0AAAAAAIAFPQAAAAAAAOg8AAAAAAAA8jwAAAAAAAAJPQAAAAAAAMA8AAAAAAAA/zwAAAAAAADmPAAAAAAAAOo8AAAAAAAA+jwAAAAAAAAGPQAAAAAAAAU9AAAAAAAA9zwAAAAAAAD3PAAAAAAAgAI9AAAAAAAA+TwAAAAAAADyPAAAAAAAgAU9AAAAAAAAyDwAAAAAAADyPAAAAAAAAPg8AAAAAAAA+DwAAAAAAADuPAAAAAAAAOY8AAAAAAAABj0AAAAAAAD8PAAAAAAAgAA9AAAAAAAA8zwAAAAAAAD+PAAAAAAAAPg8AAAAAAAA+zwAAAAAAAD1PAAAAAAAAAA9AAAAAAAA/zwAAAAAAAD6PAAAAAAAAAM9AAAAAAAA8jwAAAAAAADyPAAAAAAAAPg8AAAAAAAA6DwAAAAAAADwPAAAAAAAAOw8AAAAAAAA0DwAAAAAAIAEPQAAAAAAAAI9AAAAAAAA0DwAAAAAAADyPAAAAAAAANg8AAAAAAAA/jwAAAAAAAD7PAAAAAAAAPs8AAAAAAAA8DwAAAAAAAAFPQAAAAAAAA89AAAAAAAA2DwAAAAAAIAEPQAAAAAAAAM9AAAAAACAAj0AAAAAAIAIPQAAAAAAAPs8AAAAAABAED0AAAAAAAAJPQAAAAAAAP88AAAAAACABj0AAAAAAADiPAAAAAAAAMA8AAAAAAAA5jwAAAAAAAD6PAAAAAAAAMA8AAAAAAAAAAAAAAAAAADAPAAAAAAAAP48AAAAAAAA8DwAAAAAAIACPQAAAAAAgAE9AAAAAACAAT0AAAAAAAD1PAAAAAAAgAY9AAAAAAAA4DwAAAAAAADxPAAAAAAAAPk8AAAAAAAA8zwAAAAAAIACPQAAAAAAAAU9AAAAAAAAwDwAAAAAAAAGPQAAAAAAAOA8AAAAAACADT0AAAAAAADIPAAAAAAAAPA8AAAAAAAA1DwAAAAAAADyPAAAAAAAAOY8AAAAAAAA8zwAAAAAAACwPAAAAAAAAOQ8AAAAAAAA+jwAAAAAAAADPQAAAAAAAP48AAAAAAAAAz0AAAAAAAADPQAAAAAAAOg8AAAAAAAA4DwAAAAAAAD6PAAAAAAAAPU8AAAAAACABj0AAAAAAAD0PAAAAAAAANA8AAAAAAAA6DwAAAAAAADmPAAAAAAAgA89AAAAAAAA8DwAAAAAAAD+PAAAAAAAgAQ9AAAAAACABT0AAAAAAIAHPQAAAAAAAPI8AAAAAACACj0AAAAAAADIPAAAAAAAAPY8AAAAAAAA8DwAAAAAAAD+PAAAAAAAAO48AAAAAAAAAAAAAAAAAADmPAAAAAAAAOw8AAAAAAAA6jwAAAAAAAD6PAAAAAAAAPY8AAAAAAAA9zwAAAAAAADiPAAAAAAAAP48AAAAAAAA8DwAAAAAAAD2PAAAAAAAAPU8AAAAAACAAD0AAAAAAIABPQAAAAAAAPc8AAAAAAAA/jwAAAAAAAD3PAAAAAAAAPE8AAAAAAAAAj0AAAAAAAAAPQAAAAAAAPY8AAAAAAAA/zwAAAAAAIACPQAAAAAAAOA8AAAAAAAA+zwAAAAAAAD2PAAAAAAAAAE9AAAAAAAAwDwAAAAAAAD6PAAAAAAAAAA9AAAAAACAAT0AAAAAAADuPAAAAAAAAPE8AAAAAAAA4jwAAAAAAADoPAAAAAAAgAA9AAAAAAAABj0AAAAAAAAEPQAAAAAAAMA8AAAAAAAA/zwAAAAAAADcPAAAAAAAANQ8AAAAAACABD0AAAAAAIABPQAAAAAAANg8AAAAAAAA+zwAAAAAAACwPAAAAAAAAOY8AAAAAAAA5jwAAAAAAAAAPQAAAAAAAPs8AAAAAAAA0DwAAAAAAAD4PAAAAAAAAP48AAAAAAAA+jwAAAAAAAD2PAAAAAAAAP88AAAAAAAAAD0AAAAAAAD6PAAAAAAAAPw8AAAAAAAAAj0AAAAAAAD8PAAAAAAAAPw8AAAAAAAA+TwAAAAAAADgPAAAAAAAAAI9AAAAAAAA/jwAAAAAAAD6PAAAAAAAAMA8AAAAAAAA9DwAAAAAAAADPQAAAAAAAPI8AAAAAAAA8TwAAAAAAAD3PAAAAAAAAPE8AAAAAAAABT0AAAAAAIAKPQAAAAAAgAI9AAAAAACAAT0AAAAAAADyPAAAAAAAAPA8AAAAAAAAAj0AAAAAAAD7PAAAAAAAgAs9AAAAAAAA9zwAAAAAAADyPAAAAAAAAAAAAAAAAAAACD0AAAAAAAD7PAAAAAAAAOY8AAAAAAAA/zwAAAAAAIAGPQAAAAAAAAc9AAAAAAAA8jwAAAAAAAANPQAAAAAAAPA8AAAAAAAA9TwAAAAAAAD7PAAAAAAAANg8AAAAAAAA+DwAAAAAAADqPAAAAAAAAO48AAAAAAAA/zwAAAAAAAD8PAAAAAAAAPU8AAAAAAAAAj0AAAAAAAD2PAAAAAAAAP08AAAAAACABT0AAAAAAADgPAAAAAAAAOY8AAAAAACAAD0AAAAAAADUPAAAAAAAANw8AAAAAAAA0DwAAAAAAADoPAAAAAAAAPM8AAAAAACAAj0AAAAAAAD1PAAAAAAAAOo8AAAAAAAA/zwAAAAAAAD+PAAAAAAAAPs8AAAAAACAAz0AAAAAAAAJPQAAAAAAAOg8AAAAAACAAT0AAAAAAAAFPQAAAAAAAAI9AAAAAAAAAT0AAAAAAIAEPQAAAAAAANQ8AAAAAAAAAT0AAAAAAAAEPQAAAAAAAPY8AAAAAAAA+TwAAAAAAADyPAAAAAAAgAM9AAAAAACABj0AAAAAAAD7PAAAAAAAANw8AAAAAAAA8zwAAAAAAADYPAAAAAAAAAI9AAAAAAAA8jwAAAAAAADiPAAAAAAAAMA8AAAAAAAA/DwAAAAAAAD6PAAAAAAAAPc8AAAAAAAA/TwAAAAAAAD/PAAAAAAAAPg8AAAAAAAA8DwAAAAAAADwPAAAAAAAAPw8AAAAAAAA3DwAAAAAAADiPAAAAAAAAPI8AAAAAAAA+DwAAAAAAAD4PAAAAAAAAAAAAAAAAACAAT0AAAAAAAD0PAAAAAAAANA8AAAAAAAA3DwAAAAAAAAFPQAAAAAAAPU8AAAAAAAACD0AAAAAAADgPAAAAAAAAPg8AAAAAAAA8TwAAAAAAADqPAAAAAAAAAQ9AAAAAACABj0AAAAAAADUPAAAAAAAgAI9AAAAAACAAD0AAAAAAADuPAAAAAAAAPA8AAAAAAAA/TwAAAAAAAD6PAAAAAAAAPk8AAAAAAAAwDwAAAAAAAALPQAAAAAAAAI9AAAAAAAA+jwAAAAAAIAAPQAAAAAAwBQ9AAAAAACAAD0AAAAAAAAEPQAAAAAAAAA9AAAAAAAABj0AAAAAAAD+PAAAAAAAAPo8AAAAAAAA2DwAAAAAAAD6PAAAAAAAAAAAAAAAAACAAT0AAAAAAADUPAAAAAAAgAA9AAAAAACAAT0AAAAAAAD4PAAAAAAAAPc8AAAAAAAA+jwAAAAAAADqPAAAAAAAAAg9AAAAAAAABD0AAAAAAADzPAAAAAAAAAA9AAAAAAAA5DwAAAAAAADoPAAAAAAAANg8AAAAAAAA4jwAAAAAAAACPQAAAAAAAOQ8AAAAAACABD0AAAAAAIACPQAAAAAAANg8AAAAAAAABT0AAAAAAAD0PAAAAAAAAPU8AAAAAAAA/DwAAAAAAADiPAAAAAAAAAs9AAAAAAAABD0AAAAAAAD9PAAAAAAAAOo8AAAAAAAAAj0AAAAAAAABPQAAAAAAAPk8AAAAAAAAAT0AAAAAAAD5PAAAAAAAAP08AAAAAAAA4jwAAAAAAAACPQAAAAAAgAg9AAAAAAAADT0AAAAAAAD2PAAAAAAAAPQ8AAAAAAAA/TwAAAAAAAAAPQAAAAAAAAA9AAAAAAAACD0AAAAAAAACPQAAAAAAAMg8AAAAAAAA8jwAAAAAAIACPQAAAAAAAO48AAAAAACAAD0AAAAAAAAAAAAAAAAAAPU8AAAAAACABz0AAAAAAADiPAAAAAAAAPo8AAAAAAAAAz0AAAAAAAD8PAAAAAAAAOg8AAAAAAAA9jwAAAAAAADsPAAAAAAAgAQ9AAAAAAAA8TwAAAAAAADqPAAAAAAAAO48AAAAAAAA9DwAAAAAAADyPAAAAAAAANA8AAAAAAAA8zwAAAAAAIAGPQAAAAAAgAM9AAAAAACAAD0AAAAAAAD0PAAAAAAAAPY8AAAAAAAADj0AAAAAAAAFPQAAAAAAALA8AAAAAAAA/zwAAAAAAAAMPQAAAAAAAPo8AAAAAACAAz0AAAAAAAD2PAAAAAAAAOA8AAAAAAAA5jwAAAAAAAAHPQAAAAAAAPI8AAAAAACABj0AAAAAAADsPAAAAAAAAAw9AAAAAAAABj0AAAAAAIAMPQAAAAAAAAU9AAAAAACAED0AAAAAAAD8PAAAAAAAAPg8AAAAAAAABj0AAAAAAADuPAAAAAAAANg8AAAAAAAA/zwAAAAAAAD2PAAAAAAAAPU8AAAAAAAA8TwAAAAAAAAAPQAAAAAAANA8AAAAAACAAT0AAAAAAIAEPQAAAAAAAOo8AAAAAAAA+zwAAAAAAAAGPQAAAAAAgAc9AAAAAAAA5jwAAAAAAADqPAAAAAAAALA8AAAAAAAA0DwAAAAAAADwPAAAAAAAAPE8AAAAAAAA8TwAAAAAAAADPQAAAAAAAPA8AAAAAAAAsDwAAAAAAAD7PAAAAAAAANw8AAAAAAAA/zwAAAAAAADgPAAAAAAAAAM9AAAAAAAA/DwAAAAAAIABPQAAAAAAgAA9AAAAAAAA4jwAAAAAAADiPAAAAAAAAPs8AAAAAAAAwDwAAAAAAAADPQAAAAAAAPk8AAAAAACACT0AAAAAAAACPQAAAAAAgAw9AAAAAAAABT0AAAAAAAD7PAAAAAAAgAA9AAAAAACAET0AAAAAAAANPQAAAAAAAPY8AAAAAAAA9DwAAAAAAAABPQAAAAAAAPw8AAAAAAAA1DwAAAAAAADoPAAAAAAAAPo8AAAAAAAAyDwAAAAAAACwPAAAAAAAAPs8AAAAAAAA5jwAAAAAAADmPAAAAAAAAPc8AAAAAAAA4DwAAAAAAAD+PAAAAAAAAP08AAAAAAAAAz0AAAAAAADuPAAAAAAAAPw8AAAAAAAA7DwAAAAAAADmPAAAAAAAAOI8AAAAAAAA7DwAAAAAAADcPAAAAAAAAAA9AAAAAAAA6DwAAAAAAAD9PAAAAAAAAPY8AAAAAAAA9DwAAAAAAIAAPQAAAAAAAPc8AAAAAAAA/jwAAAAAAAD7PAAAAAAAAPM8AAAAAAAA+TwAAAAAAAD6PAAAAAAAAAA9AAAAAAAA+zwAAAAAAADQPAAAAAAAgAY9AAAAAAAABD0AAAAAAIAHPQAAAAAAAAI9AAAAAAAA8jwAAAAAAIAJPQAAAAAAAPs8AAAAAAAACz0AAAAAAAAAPQAAAAAAAOA8AAAAAAAAAAAAAAAAAAAQPQAAAAAAAAU9AAAAAAAACT0AAAAAAAAKPQAAAAAAAP48AAAAAAAA7jwAAAAAAAD7PAAAAAAAAPs8AAAAAAAA7DwAAAAAAADzPAAAAAAAAOY8AAAAAAAA8jwAAAAAAAD3PAAAAAAAAPQ8AAAAAAAABj0AAAAAAADiPAAAAAAAANg8AAAAAAAA1DwAAAAAAADIPAAAAAAAAPY8AAAAAAAA4DwAAAAAAADYPAAAAAAAAAY9AAAAAAAA9zwAAAAAAADiPAAAAAAAAPI8AAAAAAAAsDwAAAAAAAD5PAAAAAAAAOw8AAAAAAAA6jwAAAAAAIADPQAAAAAAAPE8AAAAAAAA7DwAAAAAAAD/PAAAAAAAAP08AAAAAAAA9jwAAAAAAAD6PAAAAAAAAPQ8AAAAAAAABT0AAAAAAAAAPQAAAAAAgAE9AAAAAAAA2DwAAAAAAAABPQAAAAAAAAQ9AAAAAAAA/TwAAAAAAAAAPQAAAAAAAAE9AAAAAAAA+jwAAAAAAAAJPQAAAAAAAAk9AAAAAAAA8DwAAAAAAAALPQAAAAAAAAo9AAAAAAAACz0AAAAAAADqPAAAAAAAANA8AAAAAACAAz0AAAAAAADcPAAAAAAAAPI8AAAAAAAA4DwAAAAAAIAEPQAAAAAAAAg9AAAAAAAA9DwAAAAAAAACPQAAAAAAAP08AAAAAAAA+zwAAAAAAADcPAAAAAAAAP48AAAAAAAA8DwAAAAAAAAAAAAAAAAAAPg8AAAAAAAA8jwAAAAAAADUPAAAAAAAAPc8AAAAAACACj0AAAAAAAAAAAAAAAAAAOI8AAAAAAAA9TwAAAAAAADmPAAAAAAAgAQ9AAAAAACAAz0AAAAAAADsPAAAAAAAANA8AAAAAAAA/zwAAAAAAAD1PAAAAAAAAPM8AAAAAAAA5DwAAAAAAIAAPQAAAAAAAAM9AAAAAAAA8jwAAAAAAAAAPQAAAAAAAAU9AAAAAAAA8DwAAAAAAAAQPQAAAAAAgBI9AAAAAAAA/DwAAAAAAAD6PAAAAAAAAAw9AAAAAAAAAD0AAAAAAADkPAAAAAAAAAAAAAAAAAAA9jwAAAAAAADYPAAAAAAAAA89AAAAAAAA4DwAAAAAAADkPAAAAAAAAOQ8AAAAAAAA/zwAAAAAAIAAPQAAAAAAAAE9AAAAAAAAwDwAAAAAAADcPAAAAAAAAPE8AAAAAAAACD0AAAAAAADzPAAAAAAAAPU8AAAAAAAABT0AAAAAAADqPAAAAAAAAPQ8AAAAAAAA8DwAAAAAAAAHPQAAAAAAgAI9AAAAAAAA8TwAAAAAAADoPAAAAAAAAP48AAAAAAAA7jwAAAAAAAD+PAAAAAAAAO48AAAAAACABD0AAAAAAADuPAAAAAAAAPQ8AAAAAAAA6jwAAAAAAAD/PAAAAAAAAOo8AAAAAAAABz0AAAAAAAABPQAAAAAAAPA8AAAAAAAA4DwAAAAAAADgPAAAAAAAAOA8AAAAAACABz0AAAAAAMAQPQAAAAAAAAU9AAAAAAAAAD0AAAAAAADsPAAAAAAAAPI8AAAAAAAA9jwAAAAAAAACPQAAAAAAAOw8AAAAAAAABT0AAAAAAADsPAAAAAAAABE9AAAAAAAAET0AAAAAAAAQPQAAAAAAAPE8AAAAAAAA9DwAAAAAAADAPAAAAAAAAPo8AAAAAAAA8TwAAAAAAAD+PAAAAAAAAOY8AAAAAAAA+TwAAAAAAIAEPQAAAAAAAAg9AAAAAAAABj0AAAAAAADyPAAAAAAAAMg8AAAAAAAA8DwAAAAAAIAFPQAAAAAAANg8AAAAAAAAAT0AAAAAAAAKPQAAAAAAgAA9AAAAAAAA4jwAAAAAAAD0PAAAAAAAAOQ8AAAAAAAAsDwAAAAAAADsPAAAAAAAAAE9AAAAAAAA4jwAAAAAAIADPQAAAAAAAMg8AAAAAACACT0AAAAAAAD3PAAAAAAAANA8AAAAAACAAD0AAAAAAAD4PAAAAAAAAP88AAAAAAAACT0AAAAAAAAAPQAAAAAAAAQ9AAAAAACACT0AAAAAAADsPAAAAAAAAPA8AAAAAAAABz0AAAAAAAD6PAAAAAAAAAo9AAAAAAAA8DwAAAAAAAAEPQAAAAAAAA49AAAAAAAA/DwAAAAAAAD0PAAAAAAAAAQ9AAAAAAAAEz0AAAAAAADiPAAAAAAAgAQ9AAAAAAAA8zwAAAAAAADQPAAAAAAAANA8AAAAAAAABz0AAAAAAAAFPQAAAAAAAAA9AAAAAAAA7DwAAAAAAACwPAAAAAAAgAY9AAAAAAAA5jwAAAAAAADYPAAAAAAAgAk9AAAAAAAA+jwAAAAAAADYPAAAAAAAAOQ8AAAAAAAA5DwAAAAAAADkPAAAAAAAAOI8AAAAAAAABz0AAAAAAADxPAAAAAAAAOA8AAAAAAAA/TwAAAAAAADUPAAAAAAAAAM9AAAAAAAA9TwAAAAAAAAAPQAAAAAAAPo8AAAAAACAAT0AAAAAAADxPAAAAAAAAAM9AAAAAAAAAT0AAAAAAAD6PAAAAAAAALA8AAAAAAAA7jwAAAAAAADUPAAAAAAAgAM9AAAAAAAA/jwAAAAAAAAMPQAAAAAAAAs9AAAAAAAACT0AAAAAAAD6PAAAAAAAAAw9AAAAAAAAwDwAAAAAAAAJPQAAAAAAgBE9AAAAAAAAAj0AAAAAAADwPAAAAAAAANA8AAAAAAAA7jwAAAAAAADcPAAAAAAAAOA8AAAAAAAA/TwAAAAAAAACPQAAAAAAAPg8AAAAAACAAT0AAAAAAAACPQAAAAAAgAI9AAAAAAAA2DwAAAAAAIADPQAAAAAAAP48AAAAAAAA9TwAAAAAAADIPAAAAAAAAOg8AAAAAACAAz0AAAAAAIADPQAAAAAAAMA8AAAAAAAA6DwAAAAAAADzPAAAAAAAAPU8AAAAAAAABD0AAAAAAADUPAAAAAAAANw8AAAAAAAAAj0AAAAAAAAGPQAAAAAAAOw8AAAAAAAA+zwAAAAAAIAAPQAAAAAAAPQ8AAAAAAAA0DwAAAAAAADUPAAAAAAAAPc8AAAAAAAA6jwAAAAAAAD8PAAAAAAAAPE8AAAAAACABT0AAAAAAAAAPQAAAAAAAAA9AAAAAAAABz0AAAAAAAACPQAAAAAAAA09AAAAAAAACD0AAAAAAAAOPQAAAAAAAAs9AAAAAAAADD0AAAAAAAAIPQAAAAAAABM9AAAAAAAA8jwAAAAAAAAJPQAAAAAAAOA8AAAAAAAA7DwAAAAAAADiPAAAAAAAAOA8AAAAAAAA+DwAAAAAAAD7PAAAAAAAAAk9AAAAAAAABj0AAAAAAAABPQAAAAAAAPE8AAAAAAAAwDwAAAAAAAD/PAAAAAAAAO48AAAAAACAAT0AAAAAAAD7PAAAAAAAAPA8AAAAAAAA+zwAAAAAAAAAPQAAAAAAAPs8AAAAAACAAj0AAAAAAAD+PAAAAAAAAMg8AAAAAAAA9TwAAAAAAAD3PAAAAAAAAPE8AAAAAAAACj0AAAAAAAADPQAAAAAAAPs8AAAAAAAABj0AAAAAAMATPQAAAAAAAAU9AAAAAAAAAj0AAAAAAAD+PAAAAAAAANw8AAAAAACAAz0AAAAAAAD/PAAAAAAAAPc8AAAAAAAA+DwAAAAAAADkPAAAAAAAAA09AAAAAAAA/jwAAAAAAAD0PAAAAAAAAAU9AAAAAAAADT0AAAAAAAAEPQAAAAAAAPY8AAAAAAAA/jwAAAAAAAASPQAAAAAAAAI9AAAAAAAA8DwAAAAAAAD1PAAAAAAAAPQ8AAAAAAAA/jwAAAAAAAACPQAAAAAAAAA9AAAAAAAA5jwAAAAAAADgPAAAAAAAAAo9AAAAAAAAET0AAAAAAAD0PAAAAAAAAPs8AAAAAAAA5jwAAAAAAADYPAAAAAAAAOY8AAAAAAAA7jwAAAAAAAAAAAAAAAAAANA8AAAAAAAA+TwAAAAAAADwPAAAAAAAAP88AAAAAAAA/zwAAAAAAAD6PAAAAAAAAPw8AAAAAAAA9jwAAAAAAAD0PAAAAAAAgAs9AAAAAAAA+DwAAAAAAAD7PAAAAAAAAPc8AAAAAAAA8jwAAAAAAAD3PAAAAAAAAOY8AAAAAAAA6jwAAAAAAADcPAAAAAAAAAU9AAAAAAAA8DwAAAAAAADwPAAAAAAAAOg8AAAAAAAAAT0AAAAAAAAKPQAAAAAAgBE9AAAAAAAAAj0AAAAAAAD0PAAAAAAAAAk9AAAAAAAADz0AAAAAAAADPQAAAAAAAPo8AAAAAAAABT0AAAAAAAD8PAAAAAAAAAE9AAAAAACAAT0AAAAAAADxPAAAAAAAQBA9AAAAAAAA+zwAAAAAAIAAPQAAAAAAAP08AAAAAAAA/zwAAAAAAAD6PAAAAAAAAPk8AAAAAACACD0AAAAAAAACPQAAAAAAAOA8AAAAAAAA8DwAAAAAAADgPAAAAAAAAPI8AAAAAAAA1DwAAAAAAAD5PAAAAAAAAAQ9AAAAAAAA7DwAAAAAAADqPAAAAAAAAOg8AAAAAAAA+TwAAAAAAAD7PAAAAAAAAPs8AAAAAAAA8jwAAAAAAAAAPQAAAAAAAAY9AAAAAAAA8TwAAAAAAADcPAAAAAAAAPI8AAAAAAAAyDwAAAAAAACwPAAAAAAAAPA8AAAAAAAA2DwAAAAAAADiPAAAAAAAAOw8AAAAAAAA+DwAAAAAAAAHPQAAAAAAAA49AAAAAAAA8DwAAAAAAAAKPQAAAAAAAA49AAAAAAAADD0AAAAAAADgPAAAAAAAAAg9AAAAAAAAED0AAAAAAAALPQAAAAAAAPI8AAAAAACAEz0AAAAAAAAMPQAAAAAAAPs8AAAAAAAA7jwAAAAAAAAAPQAAAAAAAPY8AAAAAAAA9jwAAAAAAAD0PAAAAAAAgAs9AAAAAAAA9jwAAAAAAAD3PAAAAAAAAOQ8AAAAAAAA8DwAAAAAAAD3PAAAAAAAAOI8AAAAAACAAj0AAAAAAAD7PAAAAAAAAMA8AAAAAAAA4jwAAAAAAAAEPQAAAAAAAPo8AAAAAAAA/zwAAAAAAADxPAAAAAAAAAM9AAAAAAAABD0AAAAAAADkPAAAAAAAAOw8AAAAAACAAj0AAAAAAAD2PAAAAAAAANA8AAAAAAAADT0AAAAAAAAEPQAAAAAAANw8AAAAAAAA+DwAAAAAAADAPAAAAAAAAP08AAAAAAAA2DwAAAAAAAAMPQAAAAAAAOg8AAAAAAAA+jwAAAAAAAABPQAAAAAAAA09AAAAAAAABD0AAAAAAAD0PAAAAAAAgBI9AAAAAAAAFD0AAAAAAAAJPQAAAAAAAAo9AAAAAAAAAj0AAAAAAADkPAAAAAAAABE9AAAAAACAED0AAAAAAAD9PAAAAAAAAP48AAAAAAAA9zwAAAAAAAD+PAAAAAAAgAU9AAAAAAAAAj0AAAAAAADiPAAAAAAAAPA8AAAAAACAAD0AAAAAAADyPAAAAAAAAAE9AAAAAAAA0DwAAAAAAADxPAAAAAAAAPI8AAAAAAAA9jwAAAAAAADAPAAAAAAAAPk8AAAAAAAA8zwAAAAAAADcPAAAAAAAAAw9AAAAAAAAAT0AAAAAAADgPAAAAAAAAO48AAAAAAAA4DwAAAAAAADxPAAAAAAAAAAAAAAAAAAA8jwAAAAAAAD+PAAAAAAAgAc9AAAAAAAA0DwAAAAAAADmPAAAAAAAANw8AAAAAACAAj0AAAAAAAD2PAAAAAAAAOg8AAAAAAAACz0AAAAAAADAPAAAAAAAAAU9AAAAAAAA+DwAAAAAAAANPQAAAAAAAA09AAAAAAAABD0AAAAAAAD+PAAAAAAAAPY8AAAAAACAGz0AAAAAAADgPAAAAAAAAA49AAAAAAAABD0AAAAAAAAKPQAAAAAAAPI8AAAAAAAA9TwAAAAAAADQPAAAAAAAAAU9AAAAAACAAD0AAAAAAADIPAAAAAAAAPo8AAAAAAAA9TwAAAAAAADiPAAAAAAAAPA8AAAAAAAA1DwAAAAAAAABPQAAAAAAAPI8AAAAAAAA5DwAAAAAAAD2PAAAAAAAAPM8AAAAAAAA3DwAAAAAAADcPAAAAAAAAPk8AAAAAAAA4jwAAAAAAADUPAAAAAAAAPg8AAAAAAAA+jwAAAAAAAACPQAAAAAAgAU9AAAAAAAA2DwAAAAAAAD3PAAAAAAAAAAAAAAAAAAAAj0AAAAAAADqPAAAAAAAAPo8AAAAAAAA2DwAAAAAAIAAPQAAAAAAANA8AAAAAAAAAz0AAAAAAAD4PAAAAAAAAOQ8AAAAAAAA2DwAAAAAAAAEPQAAAAAAANg8AAAAAAAA+DwAAAAAAAACPQAAAAAAAAE9AAAAAAAACz0AAAAAAAABPQAAAAAAAPw8AAAAAAAA2DwAAAAAAADoPAAAAAAAAAI9AAAAAAAA+jwAAAAAAAASPQAAAAAAAPg8AAAAAAAA+TwAAAAAAIAGPQAAAAAAgAk9AAAAAAAA+zwAAAAAAAD8PAAAAAAAgA49AAAAAACAAj0AAAAAAAAKPQAAAAAAAAg9AAAAAACAAj0AAAAAAADgPAAAAAAAgAE9AAAAAAAA7DwAAAAAAADxPAAAAAAAANQ8AAAAAAAA8TwAAAAAAADqPAAAAAAAAPg8AAAAAAAA9DwAAAAAAAD0PAAAAAAAAP08AAAAAAAADj0AAAAAAAD5PAAAAAAAgA09AAAAAAAA+jwAAAAAAIAEPQAAAAAAAO48AAAAAACABz0AAAAAAAD2PAAAAAAAAPI8AAAAAAAA0DwAAAAAAAAIPQAAAAAAAAY9AAAAAAAADD0AAAAAAAAOPQAAAAAAAPI8AAAAAAAAAD0AAAAAAAD6PAAAAAAAAAU9AAAAAAAA8jwAAAAAAAADPQAAAAAAANA8AAAAAAAABz0AAAAAAAAPPQAAAAAAAPg8AAAAAAAABD0AAAAAAAD+PAAAAAAAAAU9AAAAAACAFT0AAAAAAADqPAAAAAAAAO48AAAAAAAABj0AAAAAAAD+PAAAAAAAAOg8AAAAAACABj0AAAAAAAD0PAAAAAAAgAc9AAAAAAAADj0AAAAAAIAAPQAAAAAAAAQ9AAAAAAAAAT0AAAAAAAADPQAAAAAAAAI9AAAAAAAACD0AAAAAAADgPAAAAAAAgAw9AAAAAAAA7jwAAAAAAADkPAAAAAAAAPQ8AAAAAAAA8DwAAAAAAADqPAAAAAAAAAAAAAAAAAAA5jwAAAAAAAADPQAAAAAAAOY8AAAAAAAA/TwAAAAAAADAPAAAAAAAgAU9AAAAAAAA0DwAAAAAAAABPQAAAAAAAPw8AAAAAAAA9DwAAAAAAAAGPQAAAAAAAAE9AAAAAAAA5DwAAAAAAAD4PAAAAAAAAAE9AAAAAAAABj0AAAAAAADwPAAAAAAAAAQ9AAAAAAAA8jwAAAAAAIATPQAAAAAAAAs9AAAAAAAA2DwAAAAAAIATPQAAAAAAAOA8AAAAAAAABT0AAAAAAADyPAAAAAAAAPY8AAAAAAAA9TwAAAAAAIAJPQAAAAAAAAE9AAAAAAAA+zwAAAAAAAAFPQAAAAAAAOY8AAAAAAAABD0AAAAAAAD8PAAAAAAAgBA9AAAAAAAABz0AAAAAAIAFPQAAAAAAAP88AAAAAACACj0AAAAAAADmPAAAAAAAgAA9AAAAAAAA4jwAAAAAAAD4PAAAAAAAAPA8AAAAAADAFz0AAAAAAAD0PAAAAAAAAPY8AAAAAAAA/DwAAAAAAAD8PAAAAAAAAPI8AAAAAAAA4jwAAAAAAAD+PAAAAAAAAAI9AAAAAAAA9jwAAAAAAAAMPQAAAAAAAAY9AAAAAAAA8jwAAAAAAAAGPQAAAAAAAOg8AAAAAAAADz0AAAAAAAD2PAAAAAAAAAo9AAAAAAAA6DwAAAAAAAAEPQAAAAAAAPA8AAAAAAAACT0AAAAAAAD0PAAAAAAAAAs9AAAAAAAACD0AAAAAAAAJPQAAAAAAAAk9AAAAAAAAAT0AAAAAAAD+PAAAAAAAAAI9AAAAAAAABz0AAAAAAAAQPQAAAAAAAPE8AAAAAACAAD0AAAAAAIALPQAAAAAAAPs8AAAAAABAED0AAAAAAADxPAAAAAAAAAAAAAAAAACABT0AAAAAAAAAPQAAAAAAgAI9AAAAAACADD0AAAAAAADIPAAAAAAAAAI9AAAAAAAAyDwAAAAAAAADPQAAAAAAAPc8AAAAAAAAsDwAAAAAAIABPQAAAAAAAPQ8AAAAAAAA8jwAAAAAAAD8PAAAAAAAAPk8AAAAAAAA1DwAAAAAAADsPAAAAAAAAOg8AAAAAAAA7jwAAAAAAADkPAAAAAAAANw8AAAAAAAABz0AAAAAAADoPAAAAAAAAPY8AAAAAAAA8jwAAAAAAADyPAAAAAAAAAAAAAAAAAAA+DwAAAAAAAAAAAAAAAAAAAg9AAAAAAAAwDwAAAAAAADAPAAAAAAAAMA8AAAAAAAA8jwAAAAAAAD+PAAAAAAAAAk9AAAAAACAET0AAAAAAAAAPQAAAAAAAPA8AAAAAAAA9jwAAAAAAAD0PAAAAAAAAAw9AAAAAAAABT0AAAAAAADAPAAAAAAAANw8AAAAAACACj0AAAAAAIAFPQAAAAAAANw8AAAAAAAA9TwAAAAAAADzPAAAAAAAAOo8AAAAAACACz0AAAAAAADIPAAAAAAAAAA9AAAAAAAAAD0AAAAAAAD2PAAAAAAAAOQ8AAAAAABAED0AAAAAAAAOPQAAAAAAAPk8AAAAAAAAAz0AAAAAAIAIPQAAAAAAAPA8AAAAAAAA8DwAAAAAAADcPAAAAAAAgAE9AAAAAAAA+TwAAAAAAADUPAAAAAAAgAQ9AAAAAAAABj0AAAAAAAD8PAAAAAAAAAQ9AAAAAAAA4DwAAAAAAAAAAAAAAAAAAAA9AAAAAAAA8jwAAAAAAAAAAAAAAAAAAAI9AAAAAAAA8DwAAAAAAADgPAAAAAAAAAo9AAAAAAAACT0AAAAAAAAKPQAAAAAAAA09AAAAAAAACT0AAAAAAADoPAAAAAAAAAI9AAAAAAAACz0AAAAAAAD4PAAAAAAAAPA8AAAAAAAABz0AAAAAAAD6PAAAAAAAAP48AAAAAAAAAj0AAAAAAAAGPQAAAAAAgAE9AAAAAAAAED0AAAAAAADqPAAAAAAAABE9AAAAAACAAD0AAAAAAIACPQAAAAAAgAc9AAAAAAAA/jwAAAAAAAACPQAAAAAAAOY8AAAAAAAA8TwAAAAAAAAKPQAAAAAAAAE9AAAAAAAA/DwAAAAAAAD3PAAAAAAAAPA8AAAAAAAA5DwAAAAAAADwPAAAAAAAAOo8AAAAAAAA5DwAAAAAAAACPQAAAAAAAPc8AAAAAAAABj0AAAAAAAD4PAAAAAAAAPw8AAAAAAAA+DwAAAAAAADoPAAAAAAAAOA8AAAAAAAA2DwAAAAAAAAEPQAAAAAAAP48AAAAAAAA6DwAAAAAAAAOPQAAAAAAAPg8AAAAAAAAwDwAAAAAAAAAPQAAAAAAAPw8AAAAAAAABT0AAAAAAAADPQAAAAAAgBE9AAAAAAAADD0AAAAAAAD8PAAAAAAAAAU9AAAAAAAA9jwAAAAAAAD4PAAAAAAAAPY8AAAAAAAAFD0AAAAAAAAIPQAAAAAAAOY8AAAAAAAAAT0AAAAAAAD7PAAAAAAAAPs8AAAAAAAAsDwAAAAAAIAJPQAAAAAAgAM9AAAAAAAABj0AAAAAAAADPQAAAAAAAPg8AAAAAACABz0AAAAAAMASPQAAAAAAgAc9AAAAAAAA7jwAAAAAAIAAPQAAAAAAgA49AAAAAAAAAj0AAAAAAAD+PAAAAAAAAOI8AAAAAAAAsDwAAAAAAADYPAAAAAAAgAE9AAAAAAAA7jwAAAAAAADcPAAAAAAAAPE8AAAAAAAA7DwAAAAAAADyPAAAAAAAAAY9AAAAAAAA0DwAAAAAAADyPAAAAAAAAOw8AAAAAAAA6DwAAAAAAADgPAAAAAAAAOQ8AAAAAAAA6DwAAAAAAAD2PAAAAAAAAPQ8AAAAAAAABj0AAAAAAAADPQAAAAAAAAQ9AAAAAAAA6DwAAAAAAAACPQAAAAAAgBU9AAAAAAAAET0AAAAAAAALPQAAAAAAAAM9AAAAAAAA2DwAAAAAAAAHPQAAAAAAAAk9AAAAAAAACT0=","dtype":"float64","shape":[2500]}},"selected":{"id":"1789","type":"Selection"},"selection_policy":{"id":"1808","type":"UnionRenderers"}},"id":"1788","type":"ColumnDataSource"}],"root_ids":["1758"]},"title":"Bokeh Application","version":"1.2.0"}};
+  var render_items = [{"docid":"860a7f10-2ff4-4aec-97ca-8ad37447844b","roots":{"1758":"aaa24ac3-1dd6-4e23-b807-95b344ba8fcf"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        embed_document(root);
+        clearInterval(timer);
+      }
+      attempts++;
+      if (attempts > 100) {
+        console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        clearInterval(timer);
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>
