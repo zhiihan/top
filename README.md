@@ -12,7 +12,10 @@ https://hanzhihua72.github.io/top/
 
 [Analytical Derivations](Analytics.pdf)
 
+This presentation showcases my summer research done for Professor Joseph Maciejko.
 [Presentation at CUPC 2019](https://slides.com/zhihan/topology)
 
-[Presentation for SFU](https://slides.com/zhihan/majorana)
+This presentation contains an introduction to Majoranas, heavily based off of the website Topology in Condensed Matter.
+
+[Presentation for SFU 2022](https://slides.com/zhihan/majorana)
 
