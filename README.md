@@ -11,3 +11,8 @@ https://hanzhihua72.github.io/top/
 [Poster Plots](./numerical_combining.html)
 
 [Analytical Derivations](Analytics.pdf)
+
+[Presentation at CUPC 2019](https://slides.com/zhihan/topology)
+
+[Presentation for SFU](https://slides.com/zhihan/majorana)
+
