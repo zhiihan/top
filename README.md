@@ -16,6 +16,5 @@ This presentation showcases my summer research done for Professor Joseph Maciejk
 [Presentation at CUPC 2019](https://slides.com/zhihan/topology)
 
 This presentation contains an introduction to Majoranas, heavily based off of the website Topology in Condensed Matter.
-
 [Presentation for SFU 2022](https://slides.com/zhihan/majorana)
 
